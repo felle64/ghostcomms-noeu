@@ -1,5 +1,11 @@
-datasource db { provider = "postgresql" url = env("DATABASE_URL") }
-generator client { provider = "prisma-client-js" }
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
 
 model User {
   id        String   @id @default(cuid())
@@ -8,31 +14,32 @@ model User {
 }
 
 model Device {
-  id               String   @id @default(cuid())
-  user             User     @relation(fields: [userId], references: [id])
-  userId           String
-  identityKeyPub   Bytes
-  signedPrekeyPub  Bytes
-  createdAt        DateTime @default(now())
-  oneTimePrekeys   OneTimePrekey[]
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id])
+  userId          String
+  identityKeyPub  Bytes
+  signedPrekeyPub Bytes
+  createdAt       DateTime @default(now())
+  oneTimePrekeys  OneTimePrekey[]
 }
 
 model OneTimePrekey {
-  id        String   @id @default(cuid())
-  device    Device   @relation(fields: [deviceId], references: [id])
-  deviceId  String
-  keyPub    Bytes
-  used      Boolean  @default(false)
+  id       String  @id @default(cuid())
+  device   Device  @relation(fields: [deviceId], references: [id])
+  deviceId String
+  keyPub   Bytes
+  used     Boolean @default(false)
 }
 
 model Envelope {
-  id           String   @id @default(cuid())
-  toDeviceId   String
-  ciphertext   Bytes
-  contentType  String
-  createdAt    DateTime @default(now())
-  deliveredAt  DateTime?
-  expiresAt    DateTime
+  id          String   @id @default(cuid())
+  toDeviceId  String
+  ciphertext  Bytes
+  contentType String
+  createdAt   DateTime @default(now())
+  deliveredAt DateTime?
+  expiresAt   DateTime
+
   @@index([toDeviceId, createdAt])
 }
 
