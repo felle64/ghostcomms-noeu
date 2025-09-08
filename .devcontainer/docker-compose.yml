@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/base:ubuntu
+    volumes:
+      - ..:/workspaces:cached
+    command: sleep infinity
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ghostcomms
+    ports:
+      - "5432:5432"

@@ -66,7 +66,7 @@ app.get('/prekeys/:deviceId', async (req, reply) => {
 })
 
 // -- WebSocket relay --
-app.get('/ws', { websocket: true }, (conn, req) => {
+app.get('/ws', { websocket: true }, (conn: any, req) => {
   const proto = req.headers['sec-websocket-protocol']
   if (!proto) return conn.socket.close()
   let sub: JwtSub
@@ -74,7 +74,7 @@ app.get('/ws', { websocket: true }, (conn, req) => {
   const did = sub.did
   conns.set(did, conn.socket)
 
-  conn.socket.on('message', async (raw) => {
+  conn.socket.on('message', async (raw: any) => {
     try {
       const msg = JSON.parse(String(raw))
       // { to: deviceId, ciphertext: base64, contentType?: 'msg'|'media' }
