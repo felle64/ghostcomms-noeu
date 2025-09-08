@@ -39,7 +39,6 @@ model Envelope {
   createdAt   DateTime @default(now())
   deliveredAt DateTime?
   expiresAt   DateTime
-
   @@index([toDeviceId, createdAt])
 }
 
