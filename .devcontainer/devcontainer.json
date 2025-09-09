@@ -9,7 +9,8 @@
   "forwardPorts": [8080, 5173, 5432],
   "portsAttributes": {
     "8080": { "label": "Server API", "requireLocalPort": false },
-    "5173": { "label": "Client (Vite)", "requireLocalPort": false }
+    "5173": { "label": "Client (Vite)", "requireLocalPort": false },
+    "5432": { "label": "Postgres (dev)", "requireLocalPort": false }
   },
   "remoteEnv": {
     "DATABASE_URL": "postgres://postgres:postgres@db:5432/ghostcomms",
