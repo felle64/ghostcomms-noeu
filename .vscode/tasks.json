@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
   "tasks": [
-    { "label": "Server: dev", "type": "shell", "command": "cd server && npm run dev", "group": "build", "problemMatcher": [] },
-    { "label": "Client: dev", "type": "shell", "command": "cd client-web && npm run dev", "group": "build", "problemMatcher": [] }
+    { "label": "Server: dev", "type": "shell", "command": "cd server && npm run dev" },
+    { "label": "Client: dev", "type": "shell", "command": "cd client-web && npm run dev" }
   ]
 }
