@@ -75,7 +75,9 @@ app.get('/prekeys/:deviceId', async (req, reply) => {
 
 // ---- WebSocket relay (token via ?token= OR Authorization: Bearer) ----
 app.get('/ws', { websocket: true }, (conn: any, req) => {
-  // Grab query robustly (some envs don’t populate fastify req.query here)
+  console.log('New WebSocket connection attempt')
+  
+  // Grab query robustly (some envs don't populate fastify req.query here)
   const rawUrl = (req as any).raw?.url || (req as any).url || ''
   const url = new URL(rawUrl, 'http://local')
   const tokenFromQuery = url.searchParams.get('token') || undefined
@@ -89,25 +91,38 @@ app.get('/ws', { websocket: true }, (conn: any, req) => {
   }
 
   let sub: JwtSub
-  try { sub = app.jwt.verify(token) as JwtSub }
-  catch (e) { console.warn('WS: bad JWT'); return conn.socket.close() }
+  try { 
+    sub = app.jwt.verify(token) as JwtSub 
+  } catch (e) { 
+    console.warn('WS: bad JWT', e) 
+    return conn.socket.close() 
+  }
 
   const did = sub.did
   const ws = conn.socket
 
+  console.log('WebSocket authenticated for device:', did)
+  
   // Ensure single live connection
   const existing = conns.get(did)
-  if (existing && existing !== ws) {
+  if (existing && existing !== conn.socket) {
+    console.log('Closing existing connection for', did)
     try { existing.close(1000, 'replaced') } catch {}
     conns.delete(did)
   }
-  conns.set(did, ws)
-  console.log('WS: connected', did)
+  
+  conns.set(did, conn.socket)
+  console.log('WS: connected', did, 'total', conns.size)
 
+  // Handle incoming messages
   ws.on('message', async (raw: any) => {
     try {
+      console.log('Received message from', did)
       const msg = JSON.parse(String(raw))
-      if (!msg?.to || !msg?.ciphertext) return
+      if (!msg?.to || !msg?.ciphertext) {
+        console.warn('Invalid message format from', did)
+        return
+      }
 
       const expires = new Date(
         Date.now() + Number(process.env.EPHEMERAL_TTL_SECONDS ?? '86400') * 1000
@@ -122,8 +137,11 @@ app.get('/ws', { websocket: true }, (conn: any, req) => {
         }
       })
 
+      console.log('Created envelope', env.id, 'from', did, 'to', msg.to)
+
       const rcv = conns.get(msg.to)
       if (rcv) {
+        console.log('Delivering message to', msg.to)
         rcv.send(JSON.stringify({
           id: env.id,
           from: did,
@@ -133,36 +151,55 @@ app.get('/ws', { websocket: true }, (conn: any, req) => {
         }))
         await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
         await prisma.envelope.delete({ where: { id: env.id } })
+      } else {
+        console.log('Recipient', msg.to, 'not online, message stored')
       }
     } catch (e) {
-      console.warn('WS: message handling error', e)
+      console.warn('WS: message handling error for', did, e)
     }
   })
 
+  // Handle connection close - SINGLE HANDLER ONLY
   ws.on('close', (code: number, reason: Buffer) => {
-    if (conns.get(did) === ws) conns.delete(did)
-    console.log('WS: closed', did, code, reason?.toString?.() || '')
+    if (conns.get(did) === ws) {
+      conns.delete(did)
+    }
+    console.log('WS: closed', did, 'code:', code, 'reason:', reason?.toString?.() || '', 'total:', conns.size)
   })
 
+  // Handle connection errors
   ws.on('error', (err) => {
-    console.warn('WS: error', did, (err as any)?.message || err)
+    console.error('WS: error for device', did, ':', (err as any)?.message || err)
   })
 })
 
-// ---- Periodic cleanup: remove closed sockets; ping open ones (no custom flags) ----
+// ---- Periodic cleanup: remove closed sockets; ping open ones ----
 setInterval(() => {
+  console.log('Periodic cleanup - checking', conns.size, 'connections')
   for (const [did, sock] of conns) {
     const ws: any = sock
-    if (!ws) { conns.delete(did); continue }
+    if (!ws) { 
+      conns.delete(did)
+      console.log('Removed null socket for', did)
+      continue 
+    }
+    
     // OPEN is 1 in ws; guard if undefined
     const OPEN = ws.OPEN ?? 1
     if (ws.readyState !== OPEN) {
       try { ws.terminate?.() } catch {}
       conns.delete(did)
-      console.log('WS: removed dead', did)
+      console.log('WS: removed dead connection for', did)
       continue
     }
-    try { ws.ping?.() } catch {}
+    
+    // Send ping to keep connection alive
+    try { 
+      ws.ping?.()
+      console.log('Sent ping to', did) 
+    } catch (e) {
+      console.warn('Failed to ping', did, e)
+    }
   }
 }, 30_000)
 
@@ -170,6 +207,7 @@ setInterval(() => {
 app.post('/media/upload', async (_req, reply) => {
   return reply.status(501).send({ error: 'Not Implemented. Wire to Swiss object storage and return signed PUT URL.' })
 })
+
 app.get('/media/:key', async (_req, reply) => {
   return reply.status(501).send({ error: 'Not Implemented. Wire to Swiss object storage and return signed GET URL.' })
 })
