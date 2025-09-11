@@ -1,25 +1,41 @@
 name: Nightly Maintenance
+
 on:
-  schedule: [{ cron: "0 2 * * *" }]
+  schedule: [{ cron: "0 2 * * *" }] # 02:00 UTC nightly
   workflow_dispatch:
 
 jobs:
   prune-expired:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}  # set this secret!
+      # MUST be set in repo Settings → Secrets and variables → Actions
+      DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
     defaults:
       run:
         working-directory: server
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - name: Install Prisma CLI
-        run: npm -g i prisma@5
 
-      - name: Prune envelopes (expired)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Prisma CLI
+        run: npm i -g prisma@5
+
+      - name: Sanity (print versions & confirm env present)
         run: |
-          npx prisma db execute --schema=./prisma/schema.prisma --command 'DELETE FROM "Envelope" WHERE "expiresAt" < NOW();'
-          # optional: VACUUM can require privileges on managed DBs; keep only if allowed
-          # npx prisma db execute --schema=./prisma/schema.prisma --command 'VACUUM "Envelope";'
+          prisma -v
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "DATABASE_URL is not set (add PROD_DATABASE_URL secret)"; exit 1;
+          fi
+          echo "Datasource from schema:"
+          npx prisma db pull --schema=./prisma/schema.prisma --print || true
+
+      - name: Prune expired envelopes
+        run: |
+          # Use the schema so Prisma knows the datasource/provider
+          npx prisma db execute \
+            --schema=./prisma/schema.prisma \
+            --command 'DELETE FROM "Envelope" WHERE "expiresAt" < NOW();'
