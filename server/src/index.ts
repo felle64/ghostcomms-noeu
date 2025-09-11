@@ -1,37 +1,28 @@
-// Minimal Fastify WS relay (metadata-minimal).
+// GhostComms • NoEU — Fastify HTTP + ws WebSocket relay (stable order)
 import Fastify from 'fastify'
-import websocket from '@fastify/websocket'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
 import { PrismaClient } from '@prisma/client'
+import { WebSocketServer, WebSocket } from 'ws'
 import dotenv from 'dotenv'
 dotenv.config()
 
 const app = Fastify({ logger: false })
-
 await app.register(cors, {
   origin: (origin, cb) => {
-    const ok =
-      !origin ||
-      /localhost:5173$/.test(origin) ||
-      /\.githubpreview\.dev$/.test(origin) // Codespaces
+    const ok = !origin || /localhost:5173$/.test(origin) || /\.githubpreview\.dev$/.test(origin)
     cb(null, ok)
   },
   credentials: true,
 })
-
-await app.register(websocket)
 await app.register(jwt, { secret: process.env.JWT_SECRET! })
 
 const prisma = new PrismaClient()
 type JwtSub = { did: string }
 
-// One connection per deviceId
-const conns = new Map<string, import('ws').WebSocket>()
-
+// ---------- HTTP routes (define BEFORE listen) ----------
 app.get('/health', async () => ({ ok: true, region: process.env.REGION || 'CH' }))
 
-// ---- Registration ----
 app.post('/register', async (req, reply) => {
   const body = await req.body as any
   if (!body?.identityKeyPubB64 || !body?.signedPrekeyPubB64) {
@@ -56,7 +47,6 @@ app.post('/register', async (req, reply) => {
   return reply.send({ userId: user.id, deviceId: device.id, jwt: token })
 })
 
-// ---- Prekeys ----
 app.get('/prekeys/:deviceId', async (req, reply) => {
   const deviceId = (req.params as any).deviceId as string
   const device = await prisma.device.findUnique({
@@ -73,61 +63,71 @@ app.get('/prekeys/:deviceId', async (req, reply) => {
   })
 })
 
-// ---- WebSocket relay (token via ?token= OR Authorization: Bearer) ----
-app.get('/ws', { websocket: true }, (conn: any, req) => {
-  console.log('New WebSocket connection attempt')
-  
-  // Grab query robustly (some envs don't populate fastify req.query here)
-  const rawUrl = (req as any).raw?.url || (req as any).url || ''
-  const url = new URL(rawUrl, 'http://local')
-  const tokenFromQuery = url.searchParams.get('token') || undefined
-  const auth = req.headers['authorization']
-  const tokenFromAuth = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined
-  const token = tokenFromQuery || tokenFromAuth
+// (optional stubs)
+app.post('/media/upload', async (_req, reply) => reply.status(501).send({ error: 'Not Implemented' }))
+app.get('/media/:key', async (_req, reply) => reply.status(501).send({ error: 'Not Implemented' }))
 
-  if (!token) {
-    console.warn('WS: missing token (?token or Authorization)')
-    return conn.socket.close()
-  }
+// ---------- Start Fastify HTTP server ----------
+const port = Number(process.env.PORT || 8080)
+await app.listen({ port, host: '0.0.0.0' })
+console.log(`GhostComms • NoEU relay on :${port}`)
 
-  let sub: JwtSub
-  try { 
-    sub = app.jwt.verify(token) as JwtSub 
-  } catch (e) { 
-    console.warn('WS: bad JWT', e) 
-    return conn.socket.close() 
-  }
+// ---------- Attach plain ws WebSocket server AFTER listen ----------
+const wss = new WebSocketServer({ server: app.server as any })
 
+// One mapping per deviceId (we do NOT force-close older sockets)
+const conns = new Map<string, WebSocket>()
+
+function verifyToken(req: import('http').IncomingMessage): JwtSub | null {
+  try {
+    const url = new URL(req.url || '', 'http://local')
+    const token =
+      url.searchParams.get('token') ||
+      (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : undefined)
+    if (!token) return null
+    return app.jwt.verify(token) as JwtSub
+  } catch { return null }
+}
+
+wss.on('connection', (ws, req) => {
+  const sub = verifyToken(req)
+  if (!sub) { try { ws.close(1008, 'unauthorized') } catch {} ; return }
   const did = sub.did
-  const ws = conn.socket
 
-  console.log('WebSocket authenticated for device:', did)
-  
-  // Ensure single live connection
-  const existing = conns.get(did)
-  if (existing && existing !== conn.socket) {
-    console.log('Closing existing connection for', did)
-    try { existing.close(1000, 'replaced') } catch {}
-    conns.delete(did)
-  }
-  
-  conns.set(did, conn.socket)
+  conns.set(did, ws)
   console.log('WS: connected', did, 'total', conns.size)
+  // after: conns.set(did, ws) and the "WS: connected" log
+;(async () => {
+  try {
+    const pending = await prisma.envelope.findMany({
+      where: { toDeviceId: did },
+      orderBy: { createdAt: 'asc' },
+      take: 100
+    })
+    for (const env of pending) {
+      if (ws.readyState !== WebSocket.OPEN) break
+      ws.send(JSON.stringify({
+        id: env.id,
+        from: '(offline)',
+        to: did,
+        ciphertext: env.ciphertext.toString('base64'),
+        contentType: env.contentType
+      }))
+      await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
+      await prisma.envelope.delete({ where: { id: env.id } })
+    }
+  } catch (e) {
+    console.warn('WS: backlog error', (e as Error).message)
+  }
+})()
 
-  // Handle incoming messages
-  ws.on('message', async (raw: any) => {
+
+  ws.on('message', async (raw) => {
     try {
-      console.log('Received message from', did)
       const msg = JSON.parse(String(raw))
-      if (!msg?.to || !msg?.ciphertext) {
-        console.warn('Invalid message format from', did)
-        return
-      }
+      if (!msg?.to || !msg?.ciphertext) return
 
-      const expires = new Date(
-        Date.now() + Number(process.env.EPHEMERAL_TTL_SECONDS ?? '86400') * 1000
-      )
-
+      const expires = new Date(Date.now() + Number(process.env.EPHEMERAL_TTL_SECONDS ?? '86400') * 1000)
       const env = await prisma.envelope.create({
         data: {
           toDeviceId: msg.to,
@@ -137,82 +137,36 @@ app.get('/ws', { websocket: true }, (conn: any, req) => {
         }
       })
 
-      console.log('Created envelope', env.id, 'from', did, 'to', msg.to)
-
       const rcv = conns.get(msg.to)
-      if (rcv) {
-        console.log('Delivering message to', msg.to)
+      if (rcv && rcv.readyState === WebSocket.OPEN) {
         rcv.send(JSON.stringify({
-          id: env.id,
-          from: did,
-          to: msg.to,
-          ciphertext: msg.ciphertext,
-          contentType: env.contentType
+          id: env.id, from: did, to: msg.to, ciphertext: msg.ciphertext, contentType: env.contentType
         }))
         await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
         await prisma.envelope.delete({ where: { id: env.id } })
-      } else {
-        console.log('Recipient', msg.to, 'not online, message stored')
       }
     } catch (e) {
-      console.warn('WS: message handling error for', did, e)
+      console.warn('WS: message handling error', (e as Error).message)
     }
   })
 
-  // Handle connection close - SINGLE HANDLER ONLY
-  ws.on('close', (code: number, reason: Buffer) => {
-    if (conns.get(did) === ws) {
-      conns.delete(did)
-    }
-    console.log('WS: closed', did, 'code:', code, 'reason:', reason?.toString?.() || '', 'total:', conns.size)
+  ws.on('close', (code, reason) => {
+    if (conns.get(did) === ws) conns.delete(did)
+    console.log('WS: closed', did, code, reason?.toString() || '', 'total', conns.size)
   })
 
-  // Handle connection errors
-  ws.on('error', (err) => {
-    console.error('WS: error for device', did, ':', (err as any)?.message || err)
-  })
+  ws.on('error', (e) => console.warn('WS: error', did, (e as any)?.message || e))
 })
 
-// ---- Periodic cleanup: remove closed sockets; ping open ones ----
+// Safe cleanup (no custom flags)
 setInterval(() => {
-  console.log('Periodic cleanup - checking', conns.size, 'connections')
-  for (const [did, sock] of conns) {
-    const ws: any = sock
-    if (!ws) { 
+  for (const [did, ws] of conns) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      try { ws?.terminate() } catch {}
       conns.delete(did)
-      console.log('Removed null socket for', did)
-      continue 
-    }
-    
-    // OPEN is 1 in ws; guard if undefined
-    const OPEN = ws.OPEN ?? 1
-    if (ws.readyState !== OPEN) {
-      try { ws.terminate?.() } catch {}
-      conns.delete(did)
-      console.log('WS: removed dead connection for', did)
+      console.log('WS: removed dead', did)
       continue
     }
-    
-    // Send ping to keep connection alive
-    try { 
-      ws.ping?.()
-      console.log('Sent ping to', did) 
-    } catch (e) {
-      console.warn('Failed to ping', did, e)
-    }
+    try { ws.ping() } catch {}
   }
 }, 30_000)
-
-// ---- Media placeholders ----
-app.post('/media/upload', async (_req, reply) => {
-  return reply.status(501).send({ error: 'Not Implemented. Wire to Swiss object storage and return signed PUT URL.' })
-})
-
-app.get('/media/:key', async (_req, reply) => {
-  return reply.status(501).send({ error: 'Not Implemented. Wire to Swiss object storage and return signed GET URL.' })
-})
-
-const port = Number(process.env.PORT || 8080)
-app.listen({ port, host: '0.0.0.0' }).then(() => {
-  console.log(`GhostComms • NoEU relay on :${port}`)
-})

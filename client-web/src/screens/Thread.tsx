@@ -14,6 +14,8 @@ export default function Thread({ self, peer, onBack }:{
   const connIdRef = useRef(0)        // identify the "current" socket
   const stoppedRef = useRef(false)
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const reconnectAttemptsRef = useRef(0)
+  const maxReconnectAttempts = 5
 
   useEffect(() => {
     stoppedRef.current = false
@@ -42,6 +44,7 @@ export default function Thread({ self, peer, onBack }:{
     ws.onopen = () => {
       if (myId !== connIdRef.current) return  // stale
       setStatus('online')
+      reconnectAttemptsRef.current = 0 // Reset attempts on successful connection
       console.log('WS: Connected successfully')
     }
 
