@@ -1,5 +1,4 @@
 // Minimal Fastify WS relay (metadata-minimal).
-// NOTE: Content is opaque ciphertext. Server never sees plaintext.
 import Fastify from 'fastify'
 import websocket from '@fastify/websocket'
 import cors from '@fastify/cors'
@@ -9,27 +8,35 @@ import dotenv from 'dotenv'
 dotenv.config()
 
 const app = Fastify({ logger: false })
-await app.register(cors, { origin: false })
+
+await app.register(cors, {
+  origin: (origin, cb) => {
+    const ok =
+      !origin ||
+      /localhost:5173$/.test(origin) ||
+      /\.githubpreview\.dev$/.test(origin) // Codespaces
+    cb(null, ok)
+  },
+  credentials: true,
+})
+
 await app.register(websocket)
 await app.register(jwt, { secret: process.env.JWT_SECRET! })
 
 const prisma = new PrismaClient()
-
 type JwtSub = { did: string }
 
-// In-memory connection registry (MVP). Replace with Redis in prod.
+// One connection per deviceId
 const conns = new Map<string, import('ws').WebSocket>()
 
 app.get('/health', async () => ({ ok: true, region: process.env.REGION || 'CH' }))
 
-// -- Registration (device + public bundle) --
+// ---- Registration ----
 app.post('/register', async (req, reply) => {
   const body = await req.body as any
-  // Expect: { identityKeyPubB64, signedPrekeyPubB64, oneTimePrekeysB64: string[], inviteCode?:string }
   if (!body?.identityKeyPubB64 || !body?.signedPrekeyPubB64) {
     return reply.status(400).send({ error: 'missing key material' })
   }
-  // Create user lazily per device for MVP
   const user = await prisma.user.create({ data: {} })
   const device = await prisma.device.create({
     data: {
@@ -49,15 +56,16 @@ app.post('/register', async (req, reply) => {
   return reply.send({ userId: user.id, deviceId: device.id, jwt: token })
 })
 
-// -- Fetch a recipient's prekey bundle (MVP: by deviceId) --
+// ---- Prekeys ----
 app.get('/prekeys/:deviceId', async (req, reply) => {
   const deviceId = (req.params as any).deviceId as string
-  const device = await prisma.device.findUnique({ where: { id: deviceId }, include: { oneTimePrekeys: { where: { used: false }, take: 1 } } })
+  const device = await prisma.device.findUnique({
+    where: { id: deviceId },
+    include: { oneTimePrekeys: { where: { used: false }, take: 1 } }
+  })
   if (!device) return reply.status(404).send({ error: 'not found' })
   const otk = device.oneTimePrekeys[0]
-  if (otk) {
-    await prisma.oneTimePrekey.update({ where: { id: otk.id }, data: { used: true } })
-  }
+  if (otk) await prisma.oneTimePrekey.update({ where: { id: otk.id }, data: { used: true } })
   return reply.send({
     identityKeyPubB64: device.identityKeyPub.toString('base64'),
     signedPrekeyPubB64: device.signedPrekeyPub.toString('base64'),
@@ -65,21 +73,46 @@ app.get('/prekeys/:deviceId', async (req, reply) => {
   })
 })
 
-// -- WebSocket relay --
+// ---- WebSocket relay (token via ?token= OR Authorization: Bearer) ----
 app.get('/ws', { websocket: true }, (conn: any, req) => {
-  const proto = req.headers['sec-websocket-protocol']
-  if (!proto) return conn.socket.close()
-  let sub: JwtSub
-  try { sub = app.jwt.verify(String(proto)) as JwtSub } catch { return conn.socket.close() }
-  const did = sub.did
-  conns.set(did, conn.socket)
+  // Grab query robustly (some envs don’t populate fastify req.query here)
+  const rawUrl = (req as any).raw?.url || (req as any).url || ''
+  const url = new URL(rawUrl, 'http://local')
+  const tokenFromQuery = url.searchParams.get('token') || undefined
+  const auth = req.headers['authorization']
+  const tokenFromAuth = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined
+  const token = tokenFromQuery || tokenFromAuth
 
-  conn.socket.on('message', async (raw: any) => {
+  if (!token) {
+    console.warn('WS: missing token (?token or Authorization)')
+    return conn.socket.close()
+  }
+
+  let sub: JwtSub
+  try { sub = app.jwt.verify(token) as JwtSub }
+  catch (e) { console.warn('WS: bad JWT'); return conn.socket.close() }
+
+  const did = sub.did
+  const ws = conn.socket
+
+  // Ensure single live connection
+  const existing = conns.get(did)
+  if (existing && existing !== ws) {
+    try { existing.close(1000, 'replaced') } catch {}
+    conns.delete(did)
+  }
+  conns.set(did, ws)
+  console.log('WS: connected', did)
+
+  ws.on('message', async (raw: any) => {
     try {
       const msg = JSON.parse(String(raw))
-      // { to: deviceId, ciphertext: base64, contentType?: 'msg'|'media' }
       if (!msg?.to || !msg?.ciphertext) return
-      const expires = new Date(Date.now() + (Number(process.env.EPHEMERAL_TTL_SECONDS || '86400') * 1000))
+
+      const expires = new Date(
+        Date.now() + Number(process.env.EPHEMERAL_TTL_SECONDS ?? '86400') * 1000
+      )
+
       const env = await prisma.envelope.create({
         data: {
           toDeviceId: msg.to,
@@ -88,25 +121,56 @@ app.get('/ws', { websocket: true }, (conn: any, req) => {
           expiresAt: expires,
         }
       })
+
       const rcv = conns.get(msg.to)
       if (rcv) {
-        rcv.send(JSON.stringify({ id: env.id, from: did, to: msg.to, ciphertext: msg.ciphertext, contentType: env.contentType }))
+        rcv.send(JSON.stringify({
+          id: env.id,
+          from: did,
+          to: msg.to,
+          ciphertext: msg.ciphertext,
+          contentType: env.contentType
+        }))
         await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
-        // delete immediately after delivery for ephemeral behavior
-        await prisma.envelope.delete({ where: { id: env.id } })  // server holds no content post-delivery
+        await prisma.envelope.delete({ where: { id: env.id } })
       }
-    } catch {}
+    } catch (e) {
+      console.warn('WS: message handling error', e)
+    }
   })
 
-  conn.socket.on('close', () => { conns.delete(did) })
+  ws.on('close', (code: number, reason: Buffer) => {
+    if (conns.get(did) === ws) conns.delete(did)
+    console.log('WS: closed', did, code, reason?.toString?.() || '')
+  })
+
+  ws.on('error', (err) => {
+    console.warn('WS: error', did, (err as any)?.message || err)
+  })
 })
 
-// -- Media placeholders (signed URLs to be implemented with your CH object storage) --
-app.post('/media/upload', async (req, reply) => {
+// ---- Periodic cleanup: remove closed sockets; ping open ones (no custom flags) ----
+setInterval(() => {
+  for (const [did, sock] of conns) {
+    const ws: any = sock
+    if (!ws) { conns.delete(did); continue }
+    // OPEN is 1 in ws; guard if undefined
+    const OPEN = ws.OPEN ?? 1
+    if (ws.readyState !== OPEN) {
+      try { ws.terminate?.() } catch {}
+      conns.delete(did)
+      console.log('WS: removed dead', did)
+      continue
+    }
+    try { ws.ping?.() } catch {}
+  }
+}, 30_000)
+
+// ---- Media placeholders ----
+app.post('/media/upload', async (_req, reply) => {
   return reply.status(501).send({ error: 'Not Implemented. Wire to Swiss object storage and return signed PUT URL.' })
 })
-
-app.get('/media/:key', async (req, reply) => {
+app.get('/media/:key', async (_req, reply) => {
   return reply.status(501).send({ error: 'Not Implemented. Wire to Swiss object storage and return signed GET URL.' })
 })
 

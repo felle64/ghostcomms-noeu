@@ -1,11 +1,13 @@
 {
   "name": "GhostComms • NoEU",
-  "dockerComposeFile": "docker-compose.yml",
+  "dockerComposeFile": ["docker-compose.yml"],
   "service": "app",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind,consistency=cached",
   "features": {
     "ghcr.io/devcontainers/features/node:1": { "version": "20" }
   },
+  "runServices": ["db"],
   "forwardPorts": [8080, 5173, 5432],
   "portsAttributes": {
     "8080": { "label": "Server API", "requireLocalPort": false },
@@ -14,9 +16,9 @@
   },
   "remoteEnv": {
     "DATABASE_URL": "postgres://postgres:postgres@db:5432/ghostcomms",
-    "JWT_SECRET": "dev-change-me"
+    "JWT_SECRET": "510721e449e0218c314738ab86dd37cb7a48d4379da972249b0ab670abfaabc4"
   },
-  "postCreateCommand": "bash .devcontainer/postCreate.sh",
+  "postCreateCommand": "bash -lc .devcontainer/postCreate.sh",
   "customizations": {
     "vscode": {
       "extensions": [
