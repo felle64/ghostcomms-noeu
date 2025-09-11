@@ -1,21 +1,25 @@
 name: Nightly Maintenance
 on:
-  schedule: [{ cron: "0 2 * * *" }]  # 02:00 UTC nightly
+  schedule: [{ cron: "0 2 * * *" }]
   workflow_dispatch:
+
 jobs:
   prune-expired:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }} # set this secret to your CH Postgres URL
+      DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}  # set this secret!
+    defaults:
+      run:
+        working-directory: server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - name: Install Prisma CLI
         run: npm -g i prisma@5
-      - name: Prune envelopes
+
+      - name: Prune envelopes (expired)
         run: |
-          npx prisma db execute --file - <<'SQL'
-          DELETE FROM "Envelope" WHERE "expiresAt" < NOW();
-          VACUUM;
-          SQL
+          npx prisma db execute --schema=./prisma/schema.prisma --command 'DELETE FROM "Envelope" WHERE "expiresAt" < NOW();'
+          # optional: VACUUM can require privileges on managed DBs; keep only if allowed
+          # npx prisma db execute --schema=./prisma/schema.prisma --command 'VACUUM "Envelope";'
