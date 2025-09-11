@@ -1,4 +1,3 @@
-// client-web/src/api.ts
 const API_BASE =
   (import.meta as any).env?.VITE_API_URL ??
   (location.origin.includes(':5173')

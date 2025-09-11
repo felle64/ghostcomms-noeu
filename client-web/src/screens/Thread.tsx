@@ -10,33 +10,37 @@ export default function Thread({ self, peer, onBack }:{
   const [err, setErr] = useState<string | null>(null)
   const [status, setStatus] = useState<'idle'|'connecting'|'online'|'reconnecting'|'offline'>('idle')
   const wsRef = useRef<WebSocket | null>(null)
-  const retriesRef = useRef(0)
-  const openedOnceRef = useRef(false)
-  const stopRef = useRef(false)
+  const connectingRef = useRef(false)
+  const stoppedRef = useRef(false)
 
   useEffect(() => {
-    stopRef.current = false
-    connect()
-    return () => { stopRef.current = true; wsRef.current?.close() }
+    stoppedRef.current = false
+    ensureConnected(true)
+    return () => { stoppedRef.current = true; wsRef.current?.close() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peer])
 
-  function connect() {
+  function ensureConnected(initial=false) {
+    if (stoppedRef.current) return
+    const ws = wsRef.current
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+    if (connectingRef.current) return
+    connectingRef.current = true
+
     const token = localStorage.getItem('jwt')
-    if (!token) { setErr('No JWT found (re-register).'); setStatus('offline'); return }
-    setStatus(openedOnceRef.current ? 'reconnecting' : 'connecting')
+    if (!token) { setErr('No JWT found — refresh to re-register'); setStatus('offline'); connectingRef.current = false; return }
+
+    setStatus(initial ? 'connecting' : 'reconnecting')
     setErr(null)
 
-    const ws = API.ws(token)
-    wsRef.current = ws
+    const next = API.ws(token)
+    wsRef.current = next
 
-    ws.onopen = () => {
-      openedOnceRef.current = true
-      retriesRef.current = 0
+    next.onopen = () => {
+      connectingRef.current = false
       setStatus('online')
     }
-
-    ws.onmessage = async (ev) => {
+    next.onmessage = async (ev) => {
       try {
         const env = JSON.parse(ev.data)
         if (env.from === peer) {
@@ -45,32 +49,21 @@ export default function Thread({ self, peer, onBack }:{
         }
       } catch {}
     }
-
-    ws.onerror = () => {
-      // don’t spam UI; onclose will handle retries
-    }
-
-    ws.onclose = (ev) => {
-      if (stopRef.current) return
-      // 1000/1001/1006 during HMR or transient network -> retry
-      const transient = [1000,1001,1006].includes(ev.code)
-      if (transient && retriesRef.current < 5) {
-        const backoff = Math.min(1000 * Math.pow(2, retriesRef.current), 8000)
-        retriesRef.current += 1
-        setStatus('reconnecting')
-        setTimeout(connect, backoff)
-        return
-      }
-      setStatus('offline')
-      setErr(`WebSocket closed (${ev.code}) ${ev.reason || ''}`.trim())
+    next.onerror = () => { /* noisy; rely on onclose */ }
+    next.onclose = () => {
+      connectingRef.current = false
+      if (stoppedRef.current) return
+      setStatus('reconnecting')
+      setTimeout(() => ensureConnected(), 800)
     }
   }
 
   async function send(e: React.FormEvent) {
     e.preventDefault()
-    if (!text.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    const ws = wsRef.current
+    if (!text.trim() || !ws || ws.readyState !== WebSocket.OPEN) return
     const ct = await encryptFor(peer, new TextEncoder().encode(text))
-    wsRef.current.send(JSON.stringify({ to: peer, ciphertext: ct, contentType: 'msg' }))
+    ws.send(JSON.stringify({ to: peer, ciphertext: ct, contentType: 'msg' }))
     setItems(x => [...x, { id: crypto.randomUUID(), text, mine: true }])
     setText('')
   }

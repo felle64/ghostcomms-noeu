@@ -26,12 +26,12 @@ await app.register(jwt, { secret: process.env.JWT_SECRET! })
 const prisma = new PrismaClient()
 type JwtSub = { did: string }
 
-// In-memory connection registry (MVP). Replace with Redis in prod.
+// One connection per deviceId
 const conns = new Map<string, import('ws').WebSocket>()
 
 app.get('/health', async () => ({ ok: true, region: process.env.REGION || 'CH' }))
 
-// -- Registration (device + public bundle) --
+// ---- Registration ----
 app.post('/register', async (req, reply) => {
   const body = await req.body as any
   if (!body?.identityKeyPubB64 || !body?.signedPrekeyPubB64) {
@@ -56,7 +56,7 @@ app.post('/register', async (req, reply) => {
   return reply.send({ userId: user.id, deviceId: device.id, jwt: token })
 })
 
-// -- Fetch a recipient's prekey bundle (MVP: by deviceId) --
+// ---- Prekeys ----
 app.get('/prekeys/:deviceId', async (req, reply) => {
   const deviceId = (req.params as any).deviceId as string
   const device = await prisma.device.findUnique({
@@ -73,10 +73,11 @@ app.get('/prekeys/:deviceId', async (req, reply) => {
   })
 })
 
-// -- WebSocket relay (token via ?token= or Authorization: Bearer) --
+// ---- WebSocket relay (token via ?token= OR Authorization: Bearer) ----
 app.get('/ws', { websocket: true }, (conn: any, req) => {
-  // Parse token robustly from the raw URL (req.url is like "/ws?token=...")
-  const url = new URL(req.url || '', 'http://local')
+  // Grab query robustly (some envs don’t populate fastify req.query here)
+  const rawUrl = (req as any).raw?.url || (req as any).url || ''
+  const url = new URL(rawUrl, 'http://local')
   const tokenFromQuery = url.searchParams.get('token') || undefined
   const auth = req.headers['authorization']
   const tokenFromAuth = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined
@@ -88,27 +89,19 @@ app.get('/ws', { websocket: true }, (conn: any, req) => {
   }
 
   let sub: JwtSub
-  try {
-    sub = app.jwt.verify(token) as JwtSub
-  } catch (e) {
-    console.warn('WS: bad JWT', e)
-    return conn.socket.close()
-  }
+  try { sub = app.jwt.verify(token) as JwtSub }
+  catch (e) { console.warn('WS: bad JWT'); return conn.socket.close() }
 
   const did = sub.did
-  const ws = conn.socket as any
+  const ws = conn.socket
 
-  // Single live connection per device: close/replace older one
+  // Ensure single live connection
   const existing = conns.get(did)
   if (existing && existing !== ws) {
     try { existing.close(1000, 'replaced') } catch {}
     conns.delete(did)
   }
-
   conns.set(did, ws)
-  ws.isAlive = true
-  ws.on('pong', function thisHeartbeat() { this.isAlive = true })
-
   console.log('WS: connected', did)
 
   ws.on('message', async (raw: any) => {
@@ -146,33 +139,38 @@ app.get('/ws', { websocket: true }, (conn: any, req) => {
     }
   })
 
-  ws.on('error', (e: any) => console.warn('WS: error', did, e?.message || e))
   ws.on('close', (code: number, reason: Buffer) => {
     if (conns.get(did) === ws) conns.delete(did)
     console.log('WS: closed', did, code, reason?.toString?.() || '')
   })
+
+  ws.on('error', (err) => {
+    console.warn('WS: error', did, (err as any)?.message || err)
+  })
 })
 
-// Heartbeat: ping every 30s; terminate dead sockets
+// ---- Periodic cleanup: remove closed sockets; ping open ones (no custom flags) ----
 setInterval(() => {
-  for (const [did, wsAny] of conns) {
-    const ws = wsAny as any
-    if (ws.isAlive === false) {
-      try { ws.terminate() } catch {}
+  for (const [did, sock] of conns) {
+    const ws: any = sock
+    if (!ws) { conns.delete(did); continue }
+    // OPEN is 1 in ws; guard if undefined
+    const OPEN = ws.OPEN ?? 1
+    if (ws.readyState !== OPEN) {
+      try { ws.terminate?.() } catch {}
       conns.delete(did)
-      console.log('WS: terminated (no pong)', did)
+      console.log('WS: removed dead', did)
       continue
     }
-    ws.isAlive = false
-    try { ws.ping() } catch {}
+    try { ws.ping?.() } catch {}
   }
 }, 30_000)
 
-// Media placeholders
-app.post('/media/upload', async (req, reply) => {
+// ---- Media placeholders ----
+app.post('/media/upload', async (_req, reply) => {
   return reply.status(501).send({ error: 'Not Implemented. Wire to Swiss object storage and return signed PUT URL.' })
 })
-app.get('/media/:key', async (req, reply) => {
+app.get('/media/:key', async (_req, reply) => {
   return reply.status(501).send({ error: 'Not Implemented. Wire to Swiss object storage and return signed GET URL.' })
 })
 
