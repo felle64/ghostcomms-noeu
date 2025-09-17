@@ -14,12 +14,12 @@ model User {
 }
 
 model Device {
-  id              String   @id @default(cuid())
-  user            User     @relation(fields: [userId], references: [id])
+  id              String          @id @default(cuid())
+  user            User            @relation(fields: [userId], references: [id])
   userId          String
   identityKeyPub  Bytes
   signedPrekeyPub Bytes
-  createdAt       DateTime @default(now())
+  createdAt       DateTime        @default(now())
   oneTimePrekeys  OneTimePrekey[]
 }
 
@@ -32,13 +32,15 @@ model OneTimePrekey {
 }
 
 model Envelope {
-  id          String   @id @default(cuid())
-  toDeviceId  String
-  ciphertext  Bytes
-  contentType String
-  createdAt   DateTime @default(now())
-  deliveredAt DateTime?
-  expiresAt   DateTime
+  id           String    @id @default(cuid())
+  fromDeviceId String
+  toDeviceId   String
+  ciphertext   Bytes
+  contentType  String
+  createdAt    DateTime  @default(now())
+  deliveredAt  DateTime?
+  expiresAt    DateTime
+
   @@index([toDeviceId, createdAt])
 }
 

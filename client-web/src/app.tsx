@@ -1,60 +1,64 @@
 import { useEffect, useState } from 'react'
 import Thread from './screens/Thread'
 import Chats from './screens/Chats'
-import QRAdd from './screens/QRAdd'
 import { myIdentityPubB64 } from './crypto/signal'
+import { API } from './api'
 
-// Prefer env; fallback to common dev origin swap (5173 -> 8080)
-const API_BASE =
-  (import.meta as any).env?.VITE_API_URL ??
-  (location.origin.includes(':5173')
-    ? location.origin.replace(':5173', ':8080')
-    : location.origin)
-
-export default function App() {
+export default function App(){
   const [self, setSelf] = useState<string | null>(localStorage.getItem('deviceId'))
   const [peer, setPeer] = useState<string | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const [booting, setBooting] = useState<boolean>(!self)
+  const [bootErr, setBootErr] = useState<string | null>(null)
 
   useEffect(() => {
     if (!self) {
-      bootstrap()
-        .then((did) => { setSelf(did); setBooting(false) })
-        .catch((e) => { setErr(String(e?.message || e)); setBooting(false) })
+      bootstrap().then(setSelf).catch((e) => setBootErr(e.message || String(e)))
     }
   }, [self])
 
-  if (booting) return <div className="p-6">Setting up device…</div>
-  if (err) return (
-    <div className="p-6 space-y-2">
-      <div className="text-red-600 font-medium">Failed to set up device</div>
-      <pre className="text-sm whitespace-pre-wrap">{err}</pre>
-      <div className="text-sm opacity-70">Check VITE_API_URL and server CORS, then refresh.</div>
-    </div>
-  )
-  if (!self) return <div className="p-6">Couldn’t get a device ID. Refresh after fixing errors above.</div>
-
-  if (peer) return <Thread self={self} peer={peer} onBack={() => setPeer(null)} />
+  if (!self) {
+    return (
+      <div className="p-6">
+        <div>Setting up device…</div>
+        {bootErr && (
+          <pre style={{color:'#b91c1c', whiteSpace:'pre-wrap', marginTop:12}}>
+            {bootErr}
+          </pre>
+        )}
+      </div>
+    )
+  }
+  if (peer) return <Thread self={self} peer={peer} onBack={()=>setPeer(null)} />
   return <Chats onOpen={setPeer} />
 }
 
 async function bootstrap(): Promise<string> {
   const idPub = myIdentityPubB64()
-  const res = await fetch(import.meta.env.VITE_API_URL + '/register', {
+
+  const res = await fetch(API.url('/register'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({
       identityKeyPubB64: idPub,
-      // for now we don't use Signal signed prekey; send idPub again to satisfy server schema
+      // we reuse idPub as signedPrekey just for the MVP
       signedPrekeyPubB64: idPub,
       oneTimePrekeysB64: []
-    }),
+    })
   })
-  if (!res.ok) throw new Error('register failed')
-  const data = await res.json()
+
+  if (!res.ok) {
+    const body = await res.text().catch(()=>'')
+    throw new Error(`register failed: ${res.status} ${body.slice(0,120)}`)
+  }
+
+  let data: any
+  try { data = await res.json() } catch (e) {
+    const body = await res.text().catch(()=> '')
+    throw new Error(`register parse failed: ${(e as Error).message} :: ${body.slice(0,120)}`)
+  }
+
+  if (!data?.deviceId || !data?.jwt) throw new Error('register response missing deviceId/jwt')
+
   localStorage.setItem('jwt', data.jwt)
   localStorage.setItem('deviceId', data.deviceId)
   return data.deviceId as string
 }
-

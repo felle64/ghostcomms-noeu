@@ -49,22 +49,28 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
 
         const expires = new Date(Date.now() + Number(process.env.EPHEMERAL_TTL_SECONDS ?? '86400') * 1000)
         const env = await prisma.envelope.create({
-          data: {
-            toDeviceId: msg.to,
-            ciphertext: Buffer.from(msg.ciphertext, 'base64'),
-            contentType: msg.contentType ?? 'msg',
-            expiresAt: expires,
-          }
+              data: {
+              fromDeviceId: did,               // ← NEW
+              toDeviceId: msg.to,
+              ciphertext: Buffer.from(msg.ciphertext, 'base64'),
+              contentType: msg.contentType ?? 'msg',
+              expiresAt: expires,
+        }
         })
 
         const rcv = conns.get(msg.to)
         if (rcv && rcv.readyState === WebSocket.OPEN) {
-          rcv.send(JSON.stringify({
-            id: env.id, from: did, to: msg.to, ciphertext: msg.ciphertext, contentType: env.contentType
+            rcv.send(JSON.stringify({
+            id: env.id,
+            from: did,                       // sender deviceId
+            to: msg.to,
+            ciphertext: msg.ciphertext,
+            contentType: env.contentType
           }))
-          await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
-          await prisma.envelope.delete({ where: { id: env.id } })
+            await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
+            await prisma.envelope.delete({ where: { id: env.id } })
         }
+
 
         // ACK to sender
         const sender = conns.get(did)

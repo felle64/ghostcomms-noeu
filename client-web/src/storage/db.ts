@@ -7,6 +7,7 @@ export type StoredMsg = {
   mine: boolean
   delivered?: boolean
   ts: number            // Date.now()
+  system?: boolean 
 }
 
 class GCDB extends Dexie {

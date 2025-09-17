@@ -1,6 +1,7 @@
 // NaCl-based ephemeral box crypto for MVP
 // npm i tweetnacl
 import nacl from 'tweetnacl'
+import { API } from '../api'
 
 // tiny helpers
 const b64 = {
@@ -30,26 +31,37 @@ export function myIdentityPubB64(): string {
 
 // Encrypt for recipient whose identity key is known (base64)
 export async function encryptFor(recipientId: string, plaintext: Uint8Array): Promise<string> {
-  // fetch recipient public key (we reuse your /prekeys route; it returns identityKeyPubB64)
-  const res = await fetch(`${import.meta.env.VITE_API_URL}/prekeys/${recipientId}`)
-  if (!res.ok) throw new Error('peer prekeys not found')
-  const bundle = await res.json()
-  const rpub = b64.dec(bundle.identityKeyPubB64) // 32 bytes
+  // use centralized base (handles env + localhost fallback)
+  const url = API.url(`/prekeys/${encodeURIComponent(recipientId)}`)
 
-  // ephemeral sender key + random nonce
+  const res = await fetch(url, { headers: { Accept: 'application/json' } })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`prekeys fetch failed (${res.status}) ${body.slice(0,120)}`)
+  }
+
+  let bundle: any
+  try { bundle = await res.json() }
+  catch (e) {
+    const body = await res.text().catch(()=>'')
+    throw new Error(`prekeys parse failed: ${(e as Error).message} :: ${body.slice(0,120)}`)
+  }
+
+  const rpubB64 = bundle?.identityKeyPubB64
+  if (!rpubB64) throw new Error('prekeys missing identityKeyPubB64')
+
+  const rpub = new Uint8Array(atob(rpubB64).split('').map(c => c.charCodeAt(0)))
+  if (rpub.length !== 32) throw new Error(`peer key length ${rpub.length} (expected 32)`)
+
   const eph = nacl.box.keyPair()
   const nonce = nacl.randomBytes(nacl.box.nonceLength)
+  const box = nacl.box(plaintext, nonce, rpub, eph.secretKey)
 
-  // encrypt
-  const box = nacl.box(plaintext, nonce, rpub, eph.secretKey) // Uint8Array
-
-  // pack: [Epub(32) | nonce(24) | box]
   const packed = new Uint8Array(32 + 24 + box.length)
   packed.set(eph.publicKey, 0)
   packed.set(nonce, 32)
-  packed.set(box, 32 + 24)
-
-  return b64.enc(packed)
+  packed.set(box, 56)
+  return btoa(String.fromCharCode(...packed))
 }
 
 // Decrypt from sender (ciphertext base64 includes Epub + nonce + box)

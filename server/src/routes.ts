@@ -65,6 +65,48 @@ app.post('/register', async (req, reply) => {
     })
   })
 
+  // GET /inbox/from/:peerId  (JWT required)
+// Returns pending envelopes addressed to me FROM that peer, oldest first, and deletes them.
+app.get('/inbox/from/:peerId', async (req, reply) => {
+  try {
+    // verify JWT (requires @fastify/jwt already registered)
+    await (req as any).jwtVerify()
+  } catch {
+    return reply.status(401).send({ error: 'unauthorized' })
+  }
+
+  const did = (req as any).user?.did as string
+  const peerId = (req.params as any).peerId as string
+  if (!did || !peerId) return reply.status(400).send({ error: 'bad request' })
+
+  const list = await prisma.envelope.findMany({
+    where: { toDeviceId: did, fromDeviceId: peerId },
+    orderBy: { createdAt: 'asc' },
+    take: 200,
+  })
+
+  if (list.length === 0) return reply.send({ items: [] })
+
+  // mark delivered & delete
+  const ids = list.map(x => x.id)
+  await prisma.envelope.updateMany({
+    where: { id: { in: ids } },
+    data: { deliveredAt: new Date() }
+  })
+  await prisma.envelope.deleteMany({ where: { id: { in: ids } } })
+
+  return reply.send({
+    items: list.map(e => ({
+      id: e.id,
+      from: e.fromDeviceId,
+      ciphertextB64: e.ciphertext.toString('base64'),
+      contentType: e.contentType,
+      createdAt: e.createdAt.toISOString(),
+    }))
+  })
+})
+
+
   app.post('/media/upload', async (_req, reply) => reply.status(501).send({ error: 'Not Implemented' }))
   app.get('/media/:key', async (_req, reply) => reply.status(501).send({ error: 'Not Implemented' }))
 }
