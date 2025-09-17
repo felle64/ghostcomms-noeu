@@ -83,7 +83,13 @@ export default function Header({
         </select>
 
         <button onClick={onClearThread} title="Clear only this chat">Clear chat</button>
-        <button onClick={onClearAll} title="Clear ALL chats">Clear all chats (Local)</button>
+        <button
+  onClick={onClearAll}
+  title="Clears all chats on this device only — no notifications are sent."
+>
+  Clear all (local)
+</button>
+
       </div>
     </div>
   )
