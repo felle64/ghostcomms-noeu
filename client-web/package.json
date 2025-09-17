@@ -9,9 +9,10 @@
     "preview": "vite preview --port 5173"
   },
   "dependencies": {
-    "dexie": "^4.0.8",
+    "dexie": "^4.2.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/react": "^19.1.12",

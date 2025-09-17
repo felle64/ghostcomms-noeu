@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import Thread from './screens/Thread'
 import Chats from './screens/Chats'
 import QRAdd from './screens/QRAdd'
+import { myIdentityPubB64 } from './crypto/signal'
 
 // Prefer env; fallback to common dev origin swap (5173 -> 8080)
 const API_BASE =
@@ -39,20 +40,21 @@ export default function App() {
 }
 
 async function bootstrap(): Promise<string> {
-  const dummy = btoa('dummy-key')
-  const res = await fetch(`${API_BASE}/register`, {
+  const idPub = myIdentityPubB64()
+  const res = await fetch(import.meta.env.VITE_API_URL + '/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      identityKeyPubB64: dummy,
-      signedPrekeyPubB64: dummy,
-      oneTimePrekeysB64: [dummy],
+      identityKeyPubB64: idPub,
+      // for now we don't use Signal signed prekey; send idPub again to satisfy server schema
+      signedPrekeyPubB64: idPub,
+      oneTimePrekeysB64: []
     }),
   })
-  if (!res.ok) throw new Error(`POST /register ${res.status} ${res.statusText} — ${await res.text().catch(()=> '')}`)
+  if (!res.ok) throw new Error('register failed')
   const data = await res.json()
-  if (!data?.jwt || !data?.deviceId) throw new Error(`Bad /register payload: ${JSON.stringify(data)}`)
   localStorage.setItem('jwt', data.jwt)
   localStorage.setItem('deviceId', data.deviceId)
   return data.deviceId as string
 }
+
