@@ -1,0 +1,301 @@
+:root {
+  --bg: #f7f8fb;
+  --panel: #ffffff;
+  --muted: #6b7280;
+  --primary: #2563eb;
+  --primary-ink: #fff;
+  --bubble: #e7e9ee;
+  --border: #e5e7eb;
+  --ring: 0 0 0 2px rgba(37, 99, 235, 0.25);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --panel: #0f172a;
+    --muted: #9aa3b2;
+    --primary: #3b82f6;
+    --primary-ink: #fff;
+    --bubble: #1f2937;
+    --border: #233044;
+  }
+  body {
+    color: #e5e7eb;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+/* Header */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.header .left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header .title small {
+  color: var(--muted);
+  margin-left: 8px;
+}
+
+/* Controls */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.toolbar select,
+.toolbar button {
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: #111827;
+  padding: 0 10px;
+}
+@media (prefers-color-scheme: dark) {
+  .toolbar select,
+  .toolbar button {
+    background: #101828;
+    color: #e5e7eb;
+  }
+}
+.toolbar button {
+  cursor: pointer;
+}
+.toolbar button:hover {
+  box-shadow: var(--ring);
+  border-color: #cbd5e1;
+}
+.toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.toolbar input[type="checkbox"] {
+  accent-color: var(--primary);
+  transform: translateY(1px);
+}
+
+/* Messages */
+.messages {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bubble {
+  max-width: 75%;
+  padding: 9px 12px;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bubble.mine {
+  background: var(--primary);
+  color: var(--primary-ink);
+  align-self: flex-end;
+}
+.bubble.other {
+  background: var(--bubble);
+  color: #111827;
+  align-self: flex-start;
+}
+@media (prefers-color-scheme: dark) {
+  .bubble.other {
+    color: #e5e7eb;
+  }
+}
+.system {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 8px 0;
+}
+
+/* Composer */
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.composer input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  outline: none;
+  background: #fff;
+  color: #111827;
+}
+@media (prefers-color-scheme: dark) {
+  .composer input {
+    background: #0b1322;
+    color: #e5e7eb;
+  }
+}
+.composer input:focus {
+  box-shadow: var(--ring);
+  border-color: #cbd5e1;
+}
+.composer button {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 14px;
+  min-width: 86px;
+  background: var(--primary);
+  color: #fff;
+  cursor: pointer;
+}
+.composer button:disabled {
+  opacity: 0.65;
+  cursor: default;
+  background: #94a3b8;
+  border-color: #94a3b8;
+}
+/* ===== iOS-style toggle switches ===== */
+.ios-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+.ios-switch .toggle-text {
+  font-size: 12px;
+  color: var(--muted);
+}
+.ios-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.ios-switch .track {
+  --w: 44px;
+  --h: 26px;
+  --r: 999px;
+  width: var(--w);
+  height: var(--h);
+  border-radius: var(--r);
+  background: #cbd5e1;
+  position: relative;
+  transition: background-color 0.2s ease;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+@media (prefers-color-scheme: dark) {
+  .ios-switch .track {
+    background: #334155;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+  }
+}
+/* knob */
+.ios-switch .track::after {
+  --d: 22px;
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: var(--d);
+  height: var(--d);
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+@media (prefers-color-scheme: dark) {
+  .ios-switch .track::after {
+    background: #e5e7eb;
+  }
+}
+/* checked state */
+.ios-switch input:checked + .track {
+  background: var(--primary);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0);
+}
+.ios-switch input:checked + .track::after {
+  transform: translateX(18px);
+}
+/* focus ring */
+.ios-switch input:focus-visible + .track {
+  box-shadow: var(--ring);
+}
+/* hover nudge */
+.ios-switch:hover .track::after {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+/* ===== Nicer “Back” pill button ===== */
+.backbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s, transform 0.05s,
+    background 0.15s;
+}
+.backbtn svg {
+  width: 16px;
+  height: 16px;
+}
+.backbtn:hover {
+  box-shadow: var(--ring);
+  border-color: #cbd5e1;
+}
+.backbtn:active {
+  transform: translateY(1px);
+}
+.backbtn:focus-visible {
+  box-shadow: var(--ring);
+  outline: none;
+}
+@media (prefers-color-scheme: dark) {
+  .backbtn {
+    background: #0f172a;
+  }
+}
+
+/* Show “Back” text on wider screens; icon-only on narrow */
+.backbtn .label {
+  display: none;
+  font-weight: 500;
+  color: var(--muted);
+}
+@media (min-width: 520px) {
+  .backbtn .label {
+    display: inline;
+  }
+}

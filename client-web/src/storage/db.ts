@@ -8,6 +8,7 @@ export type StoredMsg = {
   delivered?: boolean
   ts: number            // Date.now()
   system?: boolean 
+  read?: boolean 
 }
 
 class GCDB extends Dexie {
@@ -67,4 +68,20 @@ export async function pruneAll(days = getRetentionDays()) {
   const cutoff = Date.now() - days * 86_400_000
   const deleted = await db.messages.where('ts').below(cutoff).delete()
   return deleted
+}
+
+// mark all received (not mine) messages in a thread as read
+export async function markThreadRead(peer: string) {
+  await db.messages
+    .where('peer').equals(peer)
+    .and(m => !m.mine && !m.read)
+    .modify({ read: true })
+}
+
+// get unread count for a thread (received & not read)
+export async function getUnreadCount(peer: string) {
+  return db.messages
+    .where('peer').equals(peer)
+    .and(m => !m.mine && !m.read)
+    .count()
 }

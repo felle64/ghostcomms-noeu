@@ -18,15 +18,25 @@ export function ensureIdentity(): { pub: Uint8Array, sec: Uint8Array } {
   let pub = LS.get('id_pub'), sec = LS.get('id_sec')
   if (!pub || !sec) {
     const kp = nacl.box.keyPair()
-    pub = kp.publicKey; sec = kp.secretKey
-    LS.set('id_pub', pub); LS.set('id_sec', sec)
+    pub = Uint8Array.from(kp.publicKey); sec = Uint8Array.from(kp.secretKey)
+    if (pub && sec) {
+      LS.set('id_pub', pub)
+      LS.set('id_sec', sec)
+    }
+  }
+  if (!pub || !sec) {
+    throw new Error('Failed to generate or retrieve identity keys');
   }
   return { pub, sec }
 }
 
 // export our public identity key for registration
 export function myIdentityPubB64(): string {
-  return b64.enc(ensureIdentity().pub)
+  const pub = ensureIdentity().pub;
+  if (!pub) {
+    throw new Error("Identity public key is null");
+  }
+  return b64.enc(pub);
 }
 
 // Encrypt for recipient whose identity key is known (base64)

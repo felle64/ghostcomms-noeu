@@ -1,5 +1,9 @@
+import { useEffect } from 'react'
+import type { Settings } from '../../storage/settings'
+
 export default function Header({
-  peer, status, retention, setRetention, onBack, onClearThread, onClearAll
+  peer, status, retention, setRetention, onBack, onClearThread, onClearAll,
+  peerTyping, settings, onToggle
 }:{
   peer: string
   status: 'idle'|'connecting'|'online'|'reconnecting'|'offline'
@@ -8,28 +12,78 @@ export default function Header({
   onBack: () => void
   onClearThread: () => void
   onClearAll: () => void
+  peerTyping: boolean
+  settings: Pick<Settings,'sendTyping'|'notifyOnClear'> & { showTyping?: boolean }
+  onToggle: (patch: Partial<Settings>) => void
 }) {
+  // Always show peer activity indicator (we only toggle whether we SEND it)
+  useEffect(() => {
+    if ((settings as any).showTyping === false) onToggle({ showTyping: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Keyboard shortcut: Esc to go back
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onBack()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onBack])
+
   return (
-    <div style={{
-      display:'flex', alignItems:'center', gap:8, padding:8,
-      borderBottom:'1px solid #eee', justifyContent:'space-between'
-    }}>
-      <div style={{display:'flex', alignItems:'center', gap:8}}>
-        <button onClick={onBack}>←</button>
-        <div>Chat with {peer.slice(0,8)}… <small style={{opacity:.6, marginLeft:8}}>{status}</small></div>
+    <div className="header">
+      <div className="left">
+        <button className="backbtn" onClick={onBack} aria-label="Back">
+          {/* Arrow icon (inline SVG) */}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+          <span className="label">Back</span>
+        </button>
+
+        <div className="title">
+          Chat with {peer.slice(0,8)}…
+          <small>{peerTyping ? 'typing…' : status}</small>
+        </div>
       </div>
 
-      <div style={{display:'flex', alignItems:'center', gap:8}}>
-        <label style={{fontSize:12, opacity:.7}}>Auto-prune:</label>
-        <select value={retention} onChange={(e)=>setRetention(Number(e.target.value))}>
+      <div className="toolbar">
+        {/* iOS-style toggles */}
+        <label className="ios-switch" title="Show the other side that you are active (typing)">
+          <input
+            type="checkbox"
+            checked={!!settings.sendTyping}
+            onChange={e => onToggle({ sendTyping: e.target.checked })}
+            aria-label="Show activity"
+          />
+          <span className="track" aria-hidden="true"></span>
+          <span className="toggle-text">Show activity</span>
+        </label>
+
+        <label className="ios-switch" title="Notify peer when you clear this chat">
+          <input
+            type="checkbox"
+            checked={!!settings.notifyOnClear}
+            onChange={e => onToggle({ notifyOnClear: e.target.checked })}
+            aria-label="Notify on clear"
+          />
+          <span className="track" aria-hidden="true"></span>
+          <span className="toggle-text">Notify on clear</span>
+        </label>
+
+        <span style={{color:'var(--muted)', fontSize:12}}>Auto-prune:</span>
+        <select value={retention} onChange={e => setRetention(Number(e.target.value))}>
           <option value={0}>Keep forever</option>
           <option value={7}>7 days</option>
           <option value={30}>30 days</option>
           <option value={90}>90 days</option>
           <option value={365}>365 days</option>
         </select>
+
         <button onClick={onClearThread} title="Clear only this chat">Clear chat</button>
-        <button onClick={onClearAll} title="Clear ALL chats">Clear all</button>
+        <button onClick={onClearAll} title="Clear ALL chats">Clear all chats (Local)</button>
       </div>
     </div>
   )
