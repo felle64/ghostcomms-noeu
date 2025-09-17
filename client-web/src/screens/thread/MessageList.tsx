@@ -4,7 +4,7 @@ import type { Msg } from './useThread'
 export default function MessageList({
   listRef, items
 }:{
-  listRef: RefObject<HTMLDivElement>
+  listRef: React.RefObject<HTMLDivElement | null>
   items: Msg[]
 }) {
   return (
