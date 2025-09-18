@@ -1,17 +1,20 @@
 import type { FastifyInstance } from 'fastify'
 import type { PrismaClient } from '@prisma/client'
-import { WebSocketServer, WebSocket } from 'ws'
+import WebSocket, { WebSocketServer } from 'ws'
 
 type JwtSub = { did: string }
 
 function verifyToken(app: FastifyInstance, req: import('http').IncomingMessage): JwtSub | null {
   try {
     const url = new URL(req.url || '', 'http://local')
-    const token = url.searchParams.get('token') ||
+    const token =
+      url.searchParams.get('token') ||
       (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : undefined)
     if (!token) return null
-    return app.jwt.verify(token) as JwtSub
-  } catch { return null }
+    return (app as any).jwt.verify(token) as JwtSub
+  } catch {
+    return null
+  }
 }
 
 export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
@@ -26,7 +29,7 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
     conns.set(did, ws)
     console.log('WS: connected', did, 'total', conns.size)
 
-    // Backlog on connect
+    // send backlog
     ;(async () => {
       const pending = await prisma.envelope.findMany({
         where: { toDeviceId: did }, orderBy: { createdAt: 'asc' }, take: 100
@@ -34,13 +37,16 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
       for (const env of pending) {
         if (ws.readyState !== WebSocket.OPEN) break
         ws.send(JSON.stringify({
-          id: env.id, from: '(offline)', to: did,
-          ciphertext: env.ciphertext.toString('base64'), contentType: env.contentType
+          id: env.id,
+          from: '(offline)',
+          to: did,
+          ciphertext: env.ciphertext.toString('base64'),
+          contentType: env.contentType
         }))
         await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
         await prisma.envelope.delete({ where: { id: env.id } })
       }
-    })().catch(()=>{})
+    })().catch(() => {})
 
     ws.on('message', async (raw) => {
       try {
@@ -48,29 +54,29 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
         if (!msg?.to || !msg?.ciphertext) return
 
         const expires = new Date(Date.now() + Number(process.env.EPHEMERAL_TTL_SECONDS ?? '86400') * 1000)
+
         const env = await prisma.envelope.create({
-              data: {
-              fromDeviceId: did,               // ← NEW
-              toDeviceId: msg.to,
-              ciphertext: Buffer.from(msg.ciphertext, 'base64'),
-              contentType: msg.contentType ?? 'msg',
-              expiresAt: expires,
-        }
+          data: {
+            fromDeviceId: did,
+            toDeviceId: msg.to,
+            ciphertext: Buffer.from(msg.ciphertext, 'base64'),
+            contentType: msg.contentType ?? 'msg',
+            expiresAt: expires,
+          }
         })
 
         const rcv = conns.get(msg.to)
         if (rcv && rcv.readyState === WebSocket.OPEN) {
-            rcv.send(JSON.stringify({
+          rcv.send(JSON.stringify({
             id: env.id,
-            from: did,                       // sender deviceId
+            from: did,
             to: msg.to,
             ciphertext: msg.ciphertext,
             contentType: env.contentType
           }))
-            await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
-            await prisma.envelope.delete({ where: { id: env.id } })
+          await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
+          await prisma.envelope.delete({ where: { id: env.id } })
         }
-
 
         // ACK to sender
         const sender = conns.get(did)
@@ -95,7 +101,7 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
     })
   })
 
-  // Cleanup
+  // periodic cleanup
   setInterval(() => {
     for (const [did, ws] of conns) {
       if (!ws || ws.readyState !== WebSocket.OPEN) {

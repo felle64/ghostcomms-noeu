@@ -1,54 +1,54 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { PrismaClient } from '@prisma/client'
 import { REGION } from './env'
 
 type JwtSub = { did: string }
 
+type RegisterBody = {
+  identityKeyPubB64: string
+  signedPrekeyPubB64: string
+  oneTimePrekeysB64?: string[]
+}
+
 export async function registerHttpRoutes(app: FastifyInstance, prisma: PrismaClient) {
   app.get('/health', async () => ({ ok: true, region: REGION }))
 
-  // inside registerHttpRoutes(app, prisma)
-app.post('/register', async (req, reply) => {
-  const b = await req.body as any
+  // -- Register a device -------------------------------------------------------
+  app.post('/register', async (req: FastifyRequest<{ Body: RegisterBody }>, reply: FastifyReply) => {
+    const b = req.body
 
-  // decode helpers
-  const decode = (s: unknown) => {
-    try { return Buffer.from(String(s || ''), 'base64') } catch { return Buffer.alloc(0) }
-  }
-
-  const idPub = decode(b.identityKeyPubB64)
-  const spPub = decode(b.signedPrekeyPubB64)
-
-  // ✅ enforce NaCl/X25519 public keys (32 bytes)
-  if (idPub.length !== 32 || spPub.length !== 32) {
-    return reply.status(400).send({
-      error: 'invalid key length; expected 32-byte X25519 public keys'
-    })
-  }
-
-  const user = await prisma.user.create({ data: {} })
-  const device = await prisma.device.create({
-    data: {
-      userId: user.id,
-      identityKeyPub: idPub,
-      signedPrekeyPub: spPub,
+    const decode = (s: unknown) => {
+      try { return Buffer.from(String(s || ''), 'base64') }
+      catch { return Buffer.alloc(0) }
     }
+
+    const idPub = decode(b?.identityKeyPubB64)
+    const spPub = decode(b?.signedPrekeyPubB64)
+
+    // enforce 32-byte X25519 pubkeys
+    if (idPub.length !== 32 || spPub.length !== 32) {
+      return reply.status(400).send({ error: 'invalid key length; expected 32-byte X25519 public keys' })
+    }
+
+    const user = await prisma.user.create({ data: {} })
+    const device = await prisma.device.create({
+      data: { userId: user.id, identityKeyPub: idPub, signedPrekeyPub: spPub }
+    })
+
+    if (Array.isArray(b.oneTimePrekeysB64)) {
+      const rows = b.oneTimePrekeysB64
+        .map(decode)
+        .filter((buf) => buf.length === 32)
+        .map((buf) => ({ deviceId: device.id, keyPub: buf }))
+      if (rows.length) await prisma.oneTimePrekey.createMany({ data: rows })
+    }
+
+    // note: reply.jwtSign is provided by @fastify/jwt
+    const token = await (reply as any).jwtSign({ did: device.id } as JwtSub, { expiresIn: '30d' })
+    return reply.send({ userId: user.id, deviceId: device.id, jwt: token })
   })
 
-  if (Array.isArray(b.oneTimePrekeysB64)) {
-    // (optional) only accept valid 32-byte prekeys
-    const rows = b.oneTimePrekeysB64
-      .map(decode)
-      .filter((buf: Buffer) => buf.length === 32)
-      .map((buf: Buffer) => ({ deviceId: device.id, keyPub: buf }))
-    if (rows.length) await prisma.oneTimePrekey.createMany({ data: rows })
-  }
-
-  const token = await reply.jwtSign({ did: device.id } as { did: string }, { expiresIn: '30d' })
-  return reply.send({ userId: user.id, deviceId: device.id, jwt: token })
-})
-
-
+  // -- Fetch a recipient's prekey bundle --------------------------------------
   app.get('/prekeys/:deviceId', async (req, reply) => {
     const deviceId = (req.params as any).deviceId as string
     const device = await prisma.device.findUnique({
@@ -56,8 +56,10 @@ app.post('/register', async (req, reply) => {
       include: { oneTimePrekeys: { where: { used: false }, take: 1 } }
     })
     if (!device) return reply.status(404).send({ error: 'not found' })
+
     const otk = device.oneTimePrekeys[0]
     if (otk) await prisma.oneTimePrekey.update({ where: { id: otk.id }, data: { used: true } })
+
     return reply.send({
       identityKeyPubB64: device.identityKeyPub.toString('base64'),
       signedPrekeyPubB64: device.signedPrekeyPub.toString('base64'),
@@ -65,48 +67,47 @@ app.post('/register', async (req, reply) => {
     })
   })
 
-  // GET /inbox/from/:peerId  (JWT required)
-// Returns pending envelopes addressed to me FROM that peer, oldest first, and deletes them.
-app.get('/inbox/from/:peerId', async (req, reply) => {
-  try {
-    // verify JWT (requires @fastify/jwt already registered)
-    await (req as any).jwtVerify()
-  } catch {
-    return reply.status(401).send({ error: 'unauthorized' })
-  }
+  // -- Inbox drain for a specific peer (JWT required) -------------------------
+  // GET /inbox/from/:peerId  → { items: [...] }
+  app.get('/inbox/from/:peerId', async (req, reply) => {
+    try {
+      await (req as any).jwtVerify()
+    } catch {
+      return reply.status(401).send({ error: 'unauthorized' })
+    }
 
-  const did = (req as any).user?.did as string
-  const peerId = (req.params as any).peerId as string
-  if (!did || !peerId) return reply.status(400).send({ error: 'bad request' })
+    const did = (req as any).user?.did as string
+    const peerId = (req.params as any).peerId as string
+    if (!did || !peerId) return reply.status(400).send({ error: 'bad request' })
 
-  const list = await prisma.envelope.findMany({
-    where: { toDeviceId: did, fromDeviceId: peerId },
-    orderBy: { createdAt: 'asc' },
-    take: 200,
+    const list = await prisma.envelope.findMany({
+      where: { toDeviceId: did, fromDeviceId: peerId },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    })
+
+    if (list.length === 0) return reply.send({ items: [] })
+
+    const ids = list.map(x => x.id)
+    await prisma.envelope.updateMany({ where: { id: { in: ids } }, data: { deliveredAt: new Date() } })
+    await prisma.envelope.deleteMany({ where: { id: { in: ids } } })
+
+    return reply.send({
+      items: list.map(e => ({
+        id: e.id,
+        from: e.fromDeviceId,
+        ciphertextB64: e.ciphertext.toString('base64'),
+        contentType: e.contentType,
+        createdAt: e.createdAt.toISOString(),
+      }))
+    })
   })
 
-  if (list.length === 0) return reply.send({ items: [] })
-
-  // mark delivered & delete
-  const ids = list.map(x => x.id)
-  await prisma.envelope.updateMany({
-    where: { id: { in: ids } },
-    data: { deliveredAt: new Date() }
+  // -- Media stubs -------------------------------------------------------------
+  app.post('/media/upload', async (_req, reply) => {
+    return reply.status(501).send({ error: 'Not Implemented' })
   })
-  await prisma.envelope.deleteMany({ where: { id: { in: ids } } })
-
-  return reply.send({
-    items: list.map(e => ({
-      id: e.id,
-      from: e.fromDeviceId,
-      ciphertextB64: e.ciphertext.toString('base64'),
-      contentType: e.contentType,
-      createdAt: e.createdAt.toISOString(),
-    }))
+  app.get('/media/:key', async (_req, reply) => {
+    return reply.status(501).send({ error: 'Not Implemented' })
   })
-})
-
-
-  app.post('/media/upload', async (_req, reply) => reply.status(501).send({ error: 'Not Implemented' }))
-  app.get('/media/:key', async (_req, reply) => reply.status(501).send({ error: 'Not Implemented' }))
 }
