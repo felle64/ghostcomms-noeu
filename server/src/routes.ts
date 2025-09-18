@@ -10,6 +10,10 @@ type RegisterBody = {
   oneTimePrekeysB64?: string[]
 }
 
+// Robust base64 helper for Prisma Bytes (Buffer | Uint8Array)
+const b64 = (bytes?: Uint8Array | Buffer | null) =>
+  bytes ? Buffer.from(bytes).toString('base64') : null
+
 export async function registerHttpRoutes(app: FastifyInstance, prisma: PrismaClient) {
   app.get('/health', async () => ({ ok: true, region: REGION }))
 
@@ -25,7 +29,6 @@ export async function registerHttpRoutes(app: FastifyInstance, prisma: PrismaCli
     const idPub = decode(b?.identityKeyPubB64)
     const spPub = decode(b?.signedPrekeyPubB64)
 
-    // enforce 32-byte X25519 pubkeys
     if (idPub.length !== 32 || spPub.length !== 32) {
       return reply.status(400).send({ error: 'invalid key length; expected 32-byte X25519 public keys' })
     }
@@ -43,7 +46,6 @@ export async function registerHttpRoutes(app: FastifyInstance, prisma: PrismaCli
       if (rows.length) await prisma.oneTimePrekey.createMany({ data: rows })
     }
 
-    // note: reply.jwtSign is provided by @fastify/jwt
     const token = await (reply as any).jwtSign({ did: device.id } as JwtSub, { expiresIn: '30d' })
     return reply.send({ userId: user.id, deviceId: device.id, jwt: token })
   })
@@ -61,14 +63,13 @@ export async function registerHttpRoutes(app: FastifyInstance, prisma: PrismaCli
     if (otk) await prisma.oneTimePrekey.update({ where: { id: otk.id }, data: { used: true } })
 
     return reply.send({
-      identityKeyPubB64: device.identityKeyPub.toString('base64'),
-      signedPrekeyPubB64: device.signedPrekeyPub.toString('base64'),
-      oneTimePrekeyPubB64: otk ? otk.keyPub.toString('base64') : null,
+      identityKeyPubB64: b64(device.identityKeyPub),
+      signedPrekeyPubB64: b64(device.signedPrekeyPub),
+      oneTimePrekeyPubB64: b64(otk?.keyPub),
     })
   })
 
   // -- Inbox drain for a specific peer (JWT required) -------------------------
-  // GET /inbox/from/:peerId  → { items: [...] }
   app.get('/inbox/from/:peerId', async (req, reply) => {
     try {
       await (req as any).jwtVerify()
@@ -96,7 +97,7 @@ export async function registerHttpRoutes(app: FastifyInstance, prisma: PrismaCli
       items: list.map(e => ({
         id: e.id,
         from: e.fromDeviceId,
-        ciphertextB64: e.ciphertext.toString('base64'),
+        ciphertextB64: b64(e.ciphertext),
         contentType: e.contentType,
         createdAt: e.createdAt.toISOString(),
       }))

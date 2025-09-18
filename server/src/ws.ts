@@ -4,6 +4,10 @@ import WebSocket, { WebSocketServer } from 'ws'
 
 type JwtSub = { did: string }
 
+// Bytes→base64 helper (Buffer | Uint8Array)
+const b64 = (bytes?: Uint8Array | Buffer | null) =>
+  bytes ? Buffer.from(bytes).toString('base64') : null
+
 function verifyToken(app: FastifyInstance, req: import('http').IncomingMessage): JwtSub | null {
   try {
     const url = new URL(req.url || '', 'http://local')
@@ -18,7 +22,7 @@ function verifyToken(app: FastifyInstance, req: import('http').IncomingMessage):
 }
 
 export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
-  const wss = new WebSocketServer({ server: app.server as any })
+  const wss = new WebSocketServer({ server: (app.server as any) })
   const conns = new Map<string, WebSocket>()
 
   wss.on('connection', (ws, req) => {
@@ -40,7 +44,7 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
           id: env.id,
           from: '(offline)',
           to: did,
-          ciphertext: env.ciphertext.toString('base64'),
+          ciphertext: b64(env.ciphertext),  // <-- safe for Uint8Array
           contentType: env.contentType
         }))
         await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
@@ -54,7 +58,6 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
         if (!msg?.to || !msg?.ciphertext) return
 
         const expires = new Date(Date.now() + Number(process.env.EPHEMERAL_TTL_SECONDS ?? '86400') * 1000)
-
         const env = await prisma.envelope.create({
           data: {
             fromDeviceId: did,
@@ -101,7 +104,6 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
     })
   })
 
-  // periodic cleanup
   setInterval(() => {
     for (const [did, ws] of conns) {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
