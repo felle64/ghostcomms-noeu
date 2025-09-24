@@ -1,41 +1,35 @@
+# .github/workflows/nightly.yml
 name: Nightly Maintenance
 
 on:
-  schedule: [{ cron: "0 2 * * *" }] # 02:00 UTC nightly
+  schedule:
+    - cron: "17 2 * * *" # daily at 02:17 UTC (change as you like)
   workflow_dispatch:
 
 jobs:
   prune-expired:
     runs-on: ubuntu-latest
-    env:
-      # MUST be set in repo Settings → Secrets and variables → Actions
-      DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
     defaults:
       run:
         working-directory: server
-        shell: bash
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - run: npm ci
 
-      - name: Install Prisma CLI
-        run: npm i -g prisma@5
-
-      - name: Sanity (print versions & confirm env present)
+      - name: Sanity (print versions & confirm env)
         run: |
-          prisma -v
-          if [ -z "${DATABASE_URL}" ]; then
-            echo "DATABASE_URL is not set (add PROD_DATABASE_URL secret)"; exit 1;
-          fi
-          echo "Datasource from schema:"
-          npx prisma db pull --schema=./prisma/schema.prisma --print || true
+          npx prisma -v
+          node -e "console.log('DATABASE_URL present:', !!process.env.DATABASE_URL)"
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
 
-      - name: Prune expired envelopes
+      - name: Delete expired envelopes
         run: |
-          # Use the schema so Prisma knows the datasource/provider
-          npx prisma db execute \
-            --schema=./prisma/schema.prisma \
-            --command 'DELETE FROM "Envelope" WHERE "expiresAt" < NOW();'
+          npx prisma db execute --file - <<'SQL'
+          DELETE FROM "Envelope" WHERE "expiresAt" < NOW();
+          SQL
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
