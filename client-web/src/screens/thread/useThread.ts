@@ -37,13 +37,17 @@ function makeSystem(text: string): Msg {
   return { id: genId(), text, system: true, ts: Date.now() }
 }
 
-async function sendControl(ws: WebSocket, peer: string, payload: any) {
+// NOTE: pass the resolved deviceId here
+async function sendControl(ws: WebSocket, peerDid: string, payload: any) {
   const plaintext = JSON.stringify({ type: 'ctrl', ...payload })
-  const ct = await encryptFor(peer, enc(plaintext))
-  ws.send(JSON.stringify({ to: peer, ciphertext: ct, contentType: 'msg' }))
+  const ct = await encryptFor(peerDid, enc(plaintext))
+  ws.send(JSON.stringify({ to: peerDid, ciphertext: ct, contentType: 'msg' }))
 }
 
 export function useThread({ self, peer }: { self: string; peer: string }) {
+  // peer = username (human label)
+  const [peerDid, setPeerDid] = useState<string | null>(null)   // resolved deviceId
+
   // UI state
   const [items, setItems] = useState<Msg[]>([])
   const [text, setText] = useState('')
@@ -72,6 +76,21 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
     if (el) el.scrollTop = el.scrollHeight
   }
 
+  // --- 0) resolve username -> deviceId once per thread open ---
+  useEffect(() => {
+    let alive = true
+    setPeerDid(null)
+    ;(async () => {
+      try {
+        const did = await API.resolveDevice(peer)   // <— requires /resolve on server
+        if (alive) setPeerDid(did)
+      } catch (e) {
+        if (alive) { setPeerDid(null); setErr('Could not resolve peer device'); }
+      }
+    })()
+    return () => { alive = false }
+  }, [peer])
+
   // --- peer typing indicator (deadline-based ticker) ---
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -84,18 +103,20 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
     return () => window.clearInterval(id)
   }, [settings.showTyping, status])
 
-  // --- initial load + per-peer inbox fetch + prune ---
+  // --- initial load + inbox fetch + prune (needs peerDid) ---
   useEffect(() => {
-    // reset typing UI when switching threads
     peerTypingUntilRef.current = 0
     setPeerTyping(false)
+    setErr(null)
+
+    if (!peerDid) return
 
     let alive = true
     ;(async () => {
-      // 1) fetch pending messages from this peer (server inbox)
+      // 1) fetch pending messages from this peer device
       const jwt = localStorage.getItem('jwt') || ''
       try {
-        const res = await fetch(API.url(`/inbox/from/${encodeURIComponent(peer)}`), {
+        const res = await fetch(API.url(`/inbox/from/${encodeURIComponent(peerDid)}`), {
           headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/json' }
         })
         if (res.ok) {
@@ -103,10 +124,11 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
           if (Array.isArray(data.items)) {
             for (const it of data.items) {
               try {
-                const plain = await decryptFrom(peer, it.ciphertextB64)
+                const plain = await decryptFrom(peerDid, it.ciphertextB64)
                 const txt = new TextDecoder().decode(plain)
                 const msg = { id: it.id, text: txt, mine: false, ts: Date.now() }
                 if (alive) setItems(x => [...x, msg])
+                // store with username label (peer) for nicer local history
                 await saveMessage({ id: it.id, peer, text: txt, mine: false, ts: msg.ts! })
               } catch (e) {
                 console.warn('Failed to decrypt inbox item', e)
@@ -120,7 +142,7 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
         console.warn('inbox error', e)
       }
 
-      // 2) prune + load local history
+      // 2) prune + load local history (by username)
       await pruneThread(peer, retention)
       const list = await loadThread(peer)
       if (!alive) return
@@ -129,9 +151,9 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
     })()
 
     return () => { alive = false }
-  }, [peer, retention])
+  }, [peerDid, peer, retention])
 
-  // --- connect WS for this thread ---
+  // --- connect WS for this thread (independent of peerDid, but handlers use it) ---
   useEffect(() => {
     stoppedRef.current = false
     connect(true)
@@ -144,7 +166,7 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
       setPeerTyping(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peer])
+  }, [peerDid])   // reconnect when resolved device changes
 
   function connect(initial = false) {
     const token = localStorage.getItem('jwt')
@@ -165,6 +187,7 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
 
     ws.onmessage = async (ev) => {
       if (myId !== connIdRef.current) return
+      if (!peerDid) return
 
       let env: any
       try { env = JSON.parse(ev.data) } catch { return }
@@ -178,11 +201,11 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
         return
       }
 
-      // only handle messages relevant to this thread
-      if (!(env.from === peer || env.from === '(offline)' || env.from == null)) return
+      // only handle messages relevant to this thread (by deviceId)
+      if (!(env.from === peerDid || env.from === '(offline)' || env.from == null)) return
 
       try {
-        const plain = await decryptFrom(peer, env.ciphertext)
+        const plain = await decryptFrom(peerDid, env.ciphertext)
         const txt = dec(plain)
 
         // ---- control messages ----
@@ -202,7 +225,6 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
             if (obj.action === 'typing') {
               if (settings.showTyping) {
                 if (obj.state === 'start') {
-                  // extend deadline
                   peerTypingUntilRef.current = Date.now() + 3500
                 } else {
                   peerTypingUntilRef.current = 0
@@ -254,14 +276,14 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
   // --- typing send/throttle helpers ---
   function sendTyping(state: 'start' | 'stop') {
     const ws = wsRef.current
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    if (!ws || ws.readyState !== WebSocket.OPEN || !peerDid) return
     if (state === 'start') {
       const now = Date.now()
       if (now - lastTypingSentRef.current < 2000) return // throttle 2s
       lastTypingSentRef.current = now
     }
     const payload = { action: 'typing', state, at: Date.now() }
-    sendControl(ws, peer, payload).catch(() => {})
+    sendControl(ws, peerDid, payload).catch(() => {})
   }
 
   function noteTyping() {
@@ -275,12 +297,12 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
   async function send(e: React.FormEvent) {
     e.preventDefault()
     const ws = wsRef.current
-    if (!text.trim() || !ws || ws.readyState !== WebSocket.OPEN) return
+    if (!text.trim() || !ws || ws.readyState !== WebSocket.OPEN || !peerDid) return
 
     const clientMsgId = genId()
     let ct: string
     try {
-      ct = await encryptFor(peer, enc(text))
+      ct = await encryptFor(peerDid, enc(text))   // deviceId here
     } catch (err) {
       const msg = (err as Error).message || String(err)
       setErr(`Cannot send: ${msg}`)
@@ -288,11 +310,12 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
     }
 
     if (settings.sendTyping) sendTyping('stop')
-    ws.send(JSON.stringify({ to: peer, ciphertext: ct, contentType: 'msg', clientMsgId }))
+    ws.send(JSON.stringify({ to: peerDid, ciphertext: ct, contentType: 'msg', clientMsgId }))
 
     const now = Date.now()
     const mine: Msg = { id: clientMsgId, text, mine: true, delivered: false, ts: now }
     setItems(x => [...x, mine])
+    // store with username label
     await saveMessage({ id: clientMsgId, peer, text, mine: true, delivered: false, ts: now })
     setText('')
     setTimeout(scrollToBottom, 0)
@@ -305,8 +328,8 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
     await dbClearThread(peer)
     setItems([])
 
-    if (settings.notifyOnClear && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      await sendControl(wsRef.current, peer, { action: 'peer-cleared', at: Date.now() })
+    if (settings.notifyOnClear && wsRef.current && wsRef.current.readyState === WebSocket.OPEN && peerDid) {
+      await sendControl(wsRef.current, peerDid, { action: 'peer-cleared', at: Date.now() })
       const sys = makeSystem('You cleared this chat (peer notified).')
       setItems([sys])
       await saveMessage({ id: sys.id, peer, text: sys.text, mine: false, system: true, ts: sys.ts! })
@@ -314,11 +337,10 @@ export function useThread({ self, peer }: { self: string; peer: string }) {
   }
 
   async function clearAll() {
-  if (!confirm('Clear ALL chats on THIS device only? No peers will be notified. This cannot be undone.')) return
-  await dbClearAll()
-  setItems([])
-}
-
+    if (!confirm('Clear ALL chats on THIS device only? No peers will be notified. This cannot be undone.')) return
+    await dbClearAll()
+    setItems([])
+  }
 
   return {
     items, setItems,

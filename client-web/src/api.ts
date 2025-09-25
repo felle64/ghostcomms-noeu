@@ -15,14 +15,20 @@ function computeBase(): string {
 const BASE = computeBase()
 
 export const API = {
-  base: BASE,
-  url(path: string) {
-    return `${BASE}${path.startsWith('/') ? path : `/${path}`}`
-  },
+  base: (import.meta as any).env?.VITE_API_URL ??
+        (location.origin.includes(':5173')
+          ? location.origin.replace(':5173', ':8080')
+          : location.origin),
+  url(p: string) { return this.base.replace(/\/$/, '') + p },
   ws(token: string) {
-    const wsBase = BASE.replace(/^http(s?):/, 'ws$1:')
+    const wsBase = this.base.replace(/^http(s?)/, 'ws$1')
     return new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(token)}`)
+  },
+  async resolveDevice(who: string): Promise<string> {
+    const r = await fetch(this.url(`/resolve/${encodeURIComponent(who)}`))
+    if (!r.ok) throw new Error('resolve failed')
+    const j = await r.json()
+    return j.deviceId as string
   },
 }
 
-export default API

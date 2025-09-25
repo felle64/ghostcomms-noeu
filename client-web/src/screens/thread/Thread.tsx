@@ -4,7 +4,9 @@ import Composer from './Composer'
 import { useThread } from './useThread'
 
 export default function Thread({ self, peer, onBack }:{
-  self: string; peer: string; onBack: () => void
+  self: string; 
+  peer: string;  // This is now a username
+  onBack: () => void
 }) {
   const t = useThread({ self, peer })
 

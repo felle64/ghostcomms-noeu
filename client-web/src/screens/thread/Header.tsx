@@ -44,9 +44,9 @@ export default function Header({
         </button>
 
         <div className="title">
-          Chat with {peer.slice(0,8)}…
+        Chat with @{peer}
           <small>{peerTyping ? 'typing…' : status}</small>
-        </div>
+      </div>
       </div>
 
       <div className="toolbar">
