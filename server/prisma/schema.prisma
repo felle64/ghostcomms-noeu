@@ -1,3 +1,4 @@
+// Updated Prisma schema with device linking support
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -14,37 +15,73 @@ model User {
   salt         String
   createdAt    DateTime @default(now())
   devices      Device[]
+  linkingSessions LinkingSession[]
+  historyArchives HistoryArchive[]
 
   @@index([username])
 }
 
 model Device {
-  id              String          @id @default(cuid())
-  user            User            @relation(fields: [userId], references: [id])
-  userId          String
-  deviceName      String? // "iPhone", "Desktop", etc.
-  identityKeyPub  Bytes
-  signedPrekeyPub Bytes
-  lastSeenAt      DateTime        @default(now())
-  createdAt       DateTime        @default(now())
-  oneTimePrekeys  OneTimePrekey[]
+  id                String           @id @default(cuid())
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            String
+  deviceName        String?          // "iPhone", "Desktop", etc.
+  identityKeyPub    Bytes
+  signedPrekeyPub   Bytes
+  lastSeenAt        DateTime         @default(now())
+  createdAt         DateTime         @default(now())
+  oneTimePrekeys    OneTimePrekey[]
+  isPrimary         Boolean          @default(false) // First device of user
 
   @@index([userId])
 }
 
 model OneTimePrekey {
   id       String  @id @default(cuid())
-  device   Device  @relation(fields: [deviceId], references: [id])
+  device   Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   deviceId String
   keyPub   Bytes
   used     Boolean @default(false)
 }
 
+model LinkingSession {
+  id                    String   @id @default(cuid())
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                String
+  provisioningAddress   String   @unique
+  linkingKeyPub         Bytes    // Temporary public key for linking
+  linkingKeyPriv        Bytes    // Temporary private key (encrypted)
+  qrData                String   // Base64 encoded QR data
+  expiresAt             DateTime
+  used                  Boolean  @default(false)
+  createdAt             DateTime @default(now())
+
+  @@index([provisioningAddress])
+  @@index([expiresAt])
+}
+
+model HistoryArchive {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  archiveKey      String   @unique  // One-time decryption key
+  encryptedData   Bytes    // Compressed and encrypted chat history
+  size            Int
+  messageCount    Int
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime // Auto-delete after 24 hours
+  downloaded      Boolean  @default(false)
+
+  @@index([userId])
+  @@index([archiveKey])
+  @@index([expiresAt])
+}
+
 model Envelope {
   id           String    @id @default(cuid())
   fromDeviceId String
-  toUserId     String // Changed to target user, not device
-  toDeviceId   String? // Optional: specific device if known
+  toUserId     String    // Changed to target user, not device
+  toDeviceId   String?   // Optional: specific device if known
   ciphertext   Bytes
   contentType  String
   createdAt    DateTime  @default(now())

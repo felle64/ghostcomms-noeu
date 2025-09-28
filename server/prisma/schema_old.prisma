@@ -1,0 +1,65 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  salt         String
+  createdAt    DateTime @default(now())
+  devices      Device[]
+
+  @@index([username])
+}
+
+model Device {
+  id              String          @id @default(cuid())
+  user            User            @relation(fields: [userId], references: [id])
+  userId          String
+  deviceName      String? // "iPhone", "Desktop", etc.
+  identityKeyPub  Bytes
+  signedPrekeyPub Bytes
+  lastSeenAt      DateTime        @default(now())
+  createdAt       DateTime        @default(now())
+  oneTimePrekeys  OneTimePrekey[]
+
+  @@index([userId])
+}
+
+model OneTimePrekey {
+  id       String  @id @default(cuid())
+  device   Device  @relation(fields: [deviceId], references: [id])
+  deviceId String
+  keyPub   Bytes
+  used     Boolean @default(false)
+}
+
+model Envelope {
+  id           String    @id @default(cuid())
+  fromDeviceId String
+  toUserId     String // Changed to target user, not device
+  toDeviceId   String? // Optional: specific device if known
+  ciphertext   Bytes
+  contentType  String
+  createdAt    DateTime  @default(now())
+  deliveredAt  DateTime?
+  expiresAt    DateTime
+
+  @@index([toUserId, createdAt])
+  @@index([toDeviceId, createdAt])
+}
+
+model Attachment {
+  id          String   @id @default(cuid())
+  objectKey   String   @unique
+  sha256      String
+  size        Int
+  contentType String
+  createdAt   DateTime @default(now())
+}
