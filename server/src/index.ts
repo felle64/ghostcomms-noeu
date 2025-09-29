@@ -4,11 +4,13 @@ import { createApp } from './createApp'
 import { registerHttpRoutes } from './routes'
 import { attachWs } from './ws'
 import { PORT } from './env'
+import registerRoutes from './server-routes-addition'
 
 
 const prisma = new PrismaClient()
 const app = await createApp()
 await registerHttpRoutes(app, prisma)
+await registerRoutes(app)
 
 
 
