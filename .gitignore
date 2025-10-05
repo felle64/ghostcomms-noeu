@@ -4,6 +4,7 @@ dist/
 build/
 .env
 .DS_Store
+secrets/
 
 # Logs
 npm-debug.log*

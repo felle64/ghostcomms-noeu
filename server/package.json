@@ -1,17 +1,19 @@
 {
   "name": "ghostcomms-server",
   "version": "0.1.0",
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
     "db:push": "prisma db push",
     "db:studio": "prisma studio"
   },
   "dependencies": {
     "@fastify/cors": "10.1.0",
+    "@fastify/helmet": "^13.0.2",
     "@fastify/jwt": "9.1.0",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/websocket": "11.2.0",
     "@prisma/client": "^6.16.1",
     "dotenv": "16.4.5",
