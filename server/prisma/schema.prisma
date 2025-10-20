@@ -90,6 +90,8 @@ model Envelope {
 
   @@index([toUserId, createdAt])
   @@index([toDeviceId, createdAt])
+  @@index([fromDeviceId])
+  @@index([expiresAt])
 }
 
 model Attachment {

@@ -38,6 +38,42 @@ export function myIdentityPubB64(): string {
   return b64.enc(pub);
 }
 
+// Generate signed prekey (separate from identity key for proper forward secrecy)
+export function ensureSignedPrekey(): { pub: Uint8Array, sec: Uint8Array } {
+  let pub = LS.get('spk_pub'), sec = LS.get('spk_sec')
+  if (!pub || !sec) {
+    const kp = nacl.box.keyPair()
+    pub = Uint8Array.from(kp.publicKey)
+    sec = Uint8Array.from(kp.secretKey)
+    if (pub && sec) {
+      LS.set('spk_pub', pub)
+      LS.set('spk_sec', sec)
+    }
+  }
+  if (!pub || !sec) {
+    throw new Error('Failed to generate signed prekey')
+  }
+  return { pub, sec }
+}
+
+export function mySignedPrekeyPubB64(): string {
+  const pub = ensureSignedPrekey().pub
+  if (!pub) {
+    throw new Error("Signed prekey public key is null")
+  }
+  return b64.enc(pub)
+}
+
+// Generate one-time prekeys for enhanced forward secrecy
+export function generateOneTimePrekeys(count: number = 10): string[] {
+  const prekeys: string[] = []
+  for (let i = 0; i < count; i++) {
+    const kp = nacl.box.keyPair()
+    prekeys.push(b64.enc(kp.publicKey))
+  }
+  return prekeys
+}
+
 // Check if recipient is a username or deviceId
 function isUsername(recipient: string): boolean {
   // Usernames are alphanumeric with underscores, 3-30 chars

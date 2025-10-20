@@ -4,6 +4,36 @@ import WebSocket, { WebSocketServer } from 'ws'
 
 type JwtSub = { uid: string; did: string }
 
+// Rate limiting for WebSocket messages
+type RateLimitEntry = {
+  count: number
+  resetAt: number
+}
+
+const MESSAGE_RATE_LIMIT = 50 // messages per window
+const RATE_WINDOW_MS = 60000 // 1 minute
+const wsRateLimits = new Map<string, RateLimitEntry>()
+
+function checkRateLimit(deviceId: string): boolean {
+  const now = Date.now()
+  const entry = wsRateLimits.get(deviceId)
+
+  if (!entry || now > entry.resetAt) {
+    wsRateLimits.set(deviceId, {
+      count: 1,
+      resetAt: now + RATE_WINDOW_MS
+    })
+    return true
+  }
+
+  if (entry.count >= MESSAGE_RATE_LIMIT) {
+    return false
+  }
+
+  entry.count++
+  return true
+}
+
 const b64 = (bytes?: Uint8Array | Buffer | null) =>
   bytes ? Buffer.from(bytes).toString('base64') : null
 
@@ -48,7 +78,9 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
     prisma.device.update({
       where: { id: did },
       data: { lastSeenAt: new Date() }
-    }).catch(() => {})
+    }).catch((err) => {
+      console.error('Failed to update lastSeenAt for device', did, err)
+    })
 
     // Send backlog for this specific device
     ;(async () => {
@@ -75,10 +107,22 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
         await prisma.envelope.update({ where: { id: env.id }, data: { deliveredAt: new Date() } })
         await prisma.envelope.delete({ where: { id: env.id } })
       }
-    })().catch(() => {})
+    })().catch((err) => {
+      console.error('Failed to send backlog for device', did, err)
+    })
 
     ws.on('message', async (raw) => {
       try {
+        // Rate limit check
+        if (!checkRateLimit(did)) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            code: 'RATE_LIMIT',
+            message: 'Too many messages, please slow down'
+          }))
+          return
+        }
+
         const msg = JSON.parse(String(raw))
         if (!msg?.to || !msg?.ciphertext) return
 
@@ -209,4 +253,14 @@ export function attachWs(app: FastifyInstance, prisma: PrismaClient) {
       try { ws.ping() } catch {}
     }
   }, 30_000)
+
+  // Cleanup old rate limit entries periodically
+  setInterval(() => {
+    const now = Date.now()
+    for (const [deviceId, entry] of wsRateLimits.entries()) {
+      if (now > entry.resetAt) {
+        wsRateLimits.delete(deviceId)
+      }
+    }
+  }, 60000)
 }

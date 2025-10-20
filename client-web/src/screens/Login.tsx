@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { API } from '../api'
-import { myIdentityPubB64 } from '../crypto/signal'
+import { myIdentityPubB64, mySignedPrekeyPubB64, generateOneTimePrekeys } from '../crypto/signal'
 
 type Props = {
   onLogin: (data: {
@@ -26,7 +26,9 @@ export default function Login({ onLogin }: Props) {
 
     try {
       const idPub = myIdentityPubB64()
-      
+      const spPub = mySignedPrekeyPubB64()
+      const otks = generateOneTimePrekeys(10)
+
       const endpoint = mode === 'signup' ? '/signup' : '/login'
       const res = await fetch(API.url(endpoint), {
         method: 'POST',
@@ -36,8 +38,8 @@ export default function Login({ onLogin }: Props) {
           password,
           deviceName: deviceName || undefined,
           identityKeyPubB64: idPub,
-          signedPrekeyPubB64: idPub, // Reusing for MVP
-          oneTimePrekeysB64: []
+          signedPrekeyPubB64: spPub,
+          oneTimePrekeysB64: otks
         })
       })
 
@@ -229,8 +231,8 @@ export default function Login({ onLogin }: Props) {
           color: 'var(--muted)',
           textAlign: 'center'
         }}>
-          <strong>Privacy Notice:</strong> Your password is hashed locally with PBKDF2. 
-          Messages are end-to-end encrypted. No phone number required.
+          <strong>Privacy Notice:</strong> Your password is hashed on the server with PBKDF2 (100,000 iterations).
+          Messages are end-to-end encrypted with NaCl. Use HTTPS connections only. No phone number required.
         </div>
       </div>
     </div>
