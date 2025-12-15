@@ -14,10 +14,6 @@
     "5173": { "label": "Client (Vite)", "requireLocalPort": false },
     "5432": { "label": "Postgres (dev)", "requireLocalPort": false }
   },
-  "remoteEnv": {
-    "DATABASE_URL": "postgres://postgres:postgres@db:5432/ghostcomms",
-    "JWT_SECRET": "510721e449e0218c314738ab86dd37cb7a48d4379da972249b0ab670abfaabc4"
-  },
   "postCreateCommand": "bash -lc .devcontainer/postCreate.sh",
   "customizations": {
     "vscode": {

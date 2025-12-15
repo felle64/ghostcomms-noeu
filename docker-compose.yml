@@ -1,6 +1,8 @@
 secrets:
   pg_password:
     file: ./secrets/pg_password.txt
+  cf_tunnel_token:
+    file: ./secrets/cf_tunnel_token.txt
 
 volumes:
   dbdata:
@@ -87,9 +89,19 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run --token eyJhIjoiMjc2NmRiODk1YjE3NDI5OWUyOWZjODFkNDQ0ODMyZjgiLCJ0IjoiOGFjM2QyNmQtZmQzZi00ZjNlLWEwNGEtZGM3NTM0NGE1YzU2IiwicyI6Ik16TXdOR0UzWldJdE5UUXdaaTAwTmpZd0xXRXhNRGN0WkRnNE9UVTBNRE0yTTJWbSJ9
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ ! -f /run/secrets/cf_tunnel_token ]; then
+          echo "Cloudflare tunnel token secret is missing" >&2
+          exit 1
+        fi
+        TOKEN="$$(cat /run/secrets/cf_tunnel_token | tr -d '\r\n\t ')"
+        exec cloudflared tunnel --no-autoupdate run --token "$${TOKEN}"
     depends_on:
       - web
       - server
-
+    secrets:
+      - cf_tunnel_token
 
