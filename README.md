@@ -5,24 +5,35 @@ Hosting target: **Switzerland**. Ephemeral messages: **ON by default**. Attachme
 
 ## Quick start (local)
 ```bash
-# 1) Server
-cd server
-cp .env.example .env  # fill DATABASE_URL and JWT_SECRET
-npm i
-npm run db:push
+# 0) Install deps once
+npm run bootstrap
+
+# 1) One command dev stack (runs server + client together)
 npm run dev
 
-# 2) Client (in another terminal)
-cd ../client-web
-npm i
-npm run dev
+# OR run pieces individually
+npm run dev:server   # inside server/
+npm run dev:client   # inside client-web/
 ```
 
 Open http://localhost:5173
 
+### Helper scripts
+- `npm run build` — builds both server and client bundles
+- `npm run docker:up` — builds images and starts the full docker stack
+- `npm run docker:offline` — runs db + API + web containers only (no Cloudflare)
+- `npm run docker:down` — stops the stack
+- `npm run docker:logs` — tails compose logs
+- `VITE_API_URL=<url> npm run docker:up` — override the API origin baked into the web image (defaults to `http://server:8080` for offline use)
+
+### Environment notes
+- `CORS_ORIGINS` (comma-separated) controls what web origins Fastify will trust. Defaults cover `https://app.nfktech.com` and `http://localhost:5173`. Set it when testing from other hosts or custom domains.
+
 ## Docker (local)
 ```bash
 docker compose up --build
+# Cloudflare tunnel is optional; add it only when ready:
+# COMPOSE_PROFILES=edge docker compose up cloudflared
 ```
 
 ## Deploy notes (CH)
@@ -35,4 +46,3 @@ docker compose up --build
 - Attachment max: **10 MB**
 - No phone numbers; users add contacts via QR / invite codes.
 ```
-

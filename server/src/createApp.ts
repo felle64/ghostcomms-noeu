@@ -2,15 +2,12 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
-import { JWT_SECRET } from './env'
+import { JWT_SECRET, CORS_ORIGINS } from './env'
 import helmet from '@fastify/helmet'
 import rateLimit from '@fastify/rate-limit'
 
 
-const ALLOWED_ORIGINS = new Set([
-  'https://app.nfktech.com',
-  'http://localhost:5173',
-])
+const ALLOWED_ORIGINS = new Set(CORS_ORIGINS)
 
 export async function createApp() {
   const app = Fastify({ logger: false })

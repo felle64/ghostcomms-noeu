@@ -77,7 +77,9 @@ services:
       context: ./client-web
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: "https://api.nfktech.com"
+        # Default to pointing browsers at the host machine's server port.
+        # Override with `VITE_API_URL=https://api.nfktech.com npm run docker:up`
+        VITE_API_URL: "${VITE_API_URL:-http://localhost:8080}"
     networks:
       - internal
     expose:
@@ -89,6 +91,7 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
+    profiles: ["edge"]  # opt-in; not needed for offline/local testing
     entrypoint:
       - /bin/sh
       - -c
@@ -104,4 +107,3 @@ services:
       - server
     secrets:
       - cf_tunnel_token
-
